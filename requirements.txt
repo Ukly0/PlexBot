@@ -1,2 +1,4 @@
 python-telegram-bot>=20.0
 nest_asyncio
+SQLAlchemy>=1.4
+PyYAML>=6.0

@@ -8,8 +8,8 @@ Escáner del sistema de archivos (Fase 2)
 Reglas clave:
 - Show = carpeta de primer nivel: <root>/<Show>/...
 - Season = carpeta de segundo nivel "Season N" | "Temporada N" | "SNN" | "TNN"
-           o bien deducida desde el nombre del archivo (SxxEyy, 1x02, Eyy)
-           (si no se deduce, fallback Season 1).
+            o bien deducida desde el nombre del archivo (SxxEyy, 1x02, Eyy)
+            (si no se deduce, fallback Season 1).
 - Episode = fichero de vídeo válido; number opcional si no se puede inferir.
 
 Uso típico:
