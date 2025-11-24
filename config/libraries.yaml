@@ -1,48 +1,24 @@
 libraries:
-  # ---- Series ----
-
-  - name: SeriesDisk1
+  - name: TV
     type: series
-    root: /media/disk1/Series
-  - name: SeriesDisk2
-    type: series
-    root: /media/disk2/Series
+    root: /media/storage/data/media/tv
 
-  # ---- Anime ----
-
-  - name: AnimeDisk1
+  - name: Anime
     type: anime
-    root: /media/disk1/Anime
-  - name: AnimeDisk2
-    type: anime
-    root: /media/disk2/Anime
+    root: /media/storage/data/media/anime
 
-  # ---- Documentary Series ----
-
-  - name: DocumentarySeriesDisk1
+  - name: DocuSeries
     type: docuseries
-    root: /media/disk1/series_documental
-  - name: DocumentarySeriesDisk2
-    type: docuseries
-    root: /media/disk2/series_documental
+    root: /media/storage/data/media/documentaries_tv
 
-  # ---- Movies ----
-  
-  - name: MoviesDisk1
-    type: movies
-    root: /media/disk1/Peliculas
-  - name: MoviesDisk2
-    type: movies
-    root: /media/disk2/Peliculas
-
-  # ---- Documentary Movies ----
-
-  - name: DocumentaryMoviesDisk1
+  - name: Documentaries
     type: documentary
-    root: /media/disk1/Documentales
-  - name: DocumentaryMoviesDisk2
-    type: documentary
-    root: /media/disk2/Documentales
+    root: /media/storage/data/media/documentaries_mov
 
+  - name: Movies
+    type: movies
+    root: /media/storage/data/media/movies
 
-
+  - name: Movies3D
+    type: movies
+    root: /media/storage/data/media/movies_3d
