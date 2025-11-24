@@ -3,13 +3,14 @@ import logging
 import os
 from typing import Optional
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from config.settings import load_settings
 from core.naming import safe_title
 from core.ingest import process_directory
 from bot.download_manager import DownloadManager
+from core.tmdb import tmdb_search, TMDbItem
 
 
 def pick_library_root(libs, lib_type: str) -> Optional[str]:
@@ -100,36 +101,22 @@ async def finalize_selection(
     msg = f"Destino fijado: {download_dir}\nEnvía enlace o archivo para descargar."
     await update.effective_message.reply_text(msg)
 
+    # If there is a pending link (user sent file/link before selecting), enqueue it now
+    pending_link = context.chat_data.pop("pending_link", None)
+    if pending_link:
+        title = context.user_data.get("manual_title") or original_title_en or label or "Content"
+        season_hint = context.chat_data.get("season_hint")
+        await queue_download_task(update.effective_message, context, pending_link, download_dir, title, season_hint)
 
-async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message:
-        return
 
-    link = None
-    if message.text and "https://t.me" in message.text:
-        link = message.text.strip()
-    elif any([message.document, message.video, message.audio, message.photo]):
-        link = get_message_link(message)
-
-    if not link:
-        return
-
-    download_dir = context.chat_data.get("download_dir")
-    if not download_dir:
-        await message.reply_text("Set a destination first with /buscar.")
-        return
-
+async def queue_download_task(message, context: ContextTypes.DEFAULT_TYPE, link: str, download_dir: str, title: str, season_hint: Optional[int]):
     tdl_template = load_settings().download.tdl_template
     cmd = tdl_template.format(url=link, dir=download_dir)
     extra_flags = context.chat_data.get("tdl_extra_flags")
     if extra_flags:
         cmd = f"{cmd} {extra_flags}"
 
-    # Queue-based download to allow concurrent tasks per chat
     mgr: DownloadManager = context.bot_data.setdefault("dl_manager", DownloadManager(max_concurrent=3))
-    title = context.user_data.get("manual_title") or context.user_data.get("pending_show", {}).get("label", "Content")
-    season_hint = context.chat_data.get("season_hint")
     path_clean = download_dir.strip('"')
 
     async def _run():
@@ -149,3 +136,91 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         await message.reply_text("⏳ Download queued and starting...")
     else:
         await message.reply_text(f"⏳ Queued at position #{position} for download: {title}")
+
+
+def _guess_title_from_filename(fname: str) -> str:
+    stem = os.path.splitext(fname)[0]
+    cleaned = stem.replace(".", " ").replace("_", " ").replace("-", " ")
+    tokens = cleaned.split()
+    skip = {"1080p", "720p", "480p", "bluray", "webdl", "webrip", "hdrip", "x264", "x265", "h264", "h265"}
+    filtered = [t for t in tokens if t.lower() not in skip]
+    title = " ".join(filtered) or cleaned
+    return title.strip()
+
+
+def _build_results_keyboard(results: list[TMDbItem], page: int = 0) -> InlineKeyboardMarkup:
+    PAGE_SIZE = 5
+    start = page * PAGE_SIZE
+    slice_items = results[start : start + PAGE_SIZE]
+    buttons: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for item in slice_items:
+        label = f"{item.title} ({item.year})" if item.year else item.title
+        row.append(InlineKeyboardButton(label[:64], callback_data=f"tmdb|{item.type}|{item.id}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    pagination = []
+    total_pages = (len(results) - 1) // PAGE_SIZE if results else 0
+    if page > 0:
+        pagination.append(InlineKeyboardButton("⬅️", callback_data=f"page|{page-1}"))
+    if page < total_pages:
+        pagination.append(InlineKeyboardButton("➡️", callback_data=f"page|{page+1}"))
+    if pagination:
+        buttons.append(pagination)
+    buttons.append([InlineKeyboardButton("✍️ Manual entry", callback_data="manual|start")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")])
+    return InlineKeyboardMarkup(buttons)
+
+
+async def prompt_tmdb_from_filename(message, context, fname: str):
+    guess = _guess_title_from_filename(fname)
+    results = tmdb_search(guess)
+    context.user_data["results_list"] = results
+    context.user_data["results_map"] = {f"{r.type}:{r.id}": r for r in results}
+    context.user_data["results_page"] = 0
+    if results:
+        await message.reply_text(
+            f"Detected file: {fname}\nSelect the title or type another query.",
+            reply_markup=_build_results_keyboard(results, 0),
+        )
+    else:
+        await message.reply_text(
+            f"Detected file: {fname}\nNo TMDb results for '{guess}'. Use /buscar or manual entry.",
+        )
+
+
+async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if not message:
+        return
+
+    link = None
+    if message.text and "https://t.me" in message.text:
+        link = message.text.strip()
+    elif any([message.document, message.video, message.audio, message.photo]):
+        link = get_message_link(message)
+
+    if not link:
+        return
+
+    download_dir = context.chat_data.get("download_dir")
+    if not download_dir:
+        file_name = None
+        if message.document:
+            file_name = message.document.file_name
+        elif message.video:
+            file_name = message.video.file_name
+        if file_name:
+            context.chat_data["pending_link"] = link
+            context.chat_data["pending_filename"] = file_name
+            await prompt_tmdb_from_filename(message, context, file_name)
+            return
+        await message.reply_text("Set a destination first with /buscar.")
+        return
+
+    title = context.user_data.get("manual_title") or context.user_data.get("pending_show", {}).get("label", "Content")
+    season_hint = context.chat_data.get("season_hint")
+    await queue_download_task(message, context, link, download_dir, title, season_hint)

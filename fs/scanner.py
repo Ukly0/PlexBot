@@ -329,6 +329,14 @@ def scan_all_libraries(
     Escanea TODAS las Libraries registradas.
     """
     stats = ScanStats()
-    for t in (LibraryType.series, LibraryType.anime, LibraryType.docuseries, LibraryType.documentary, LibraryType.movie):
+    for t in (
+        LibraryType.series,
+        LibraryType.anime,
+        LibraryType.docuseries,
+        LibraryType.documentary,
+        getattr(LibraryType, "movies", None) or LibraryType.movie,
+    ):
+        if t is None:
+            continue
         stats += scan_libraries_by_type(s, t, verbose=verbose)
     return stats
