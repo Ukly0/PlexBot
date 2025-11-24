@@ -1375,3 +1375,16 @@ AttributeError: type object 'LibraryType' has no attribute 'movie'. Did you mean
 2025-11-25 00:05:00,903 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
 2025-11-25 00:05:10,951 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
 2025-11-25 00:05:21,015 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:05:31,063 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:05:41,110 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:05:51,157 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:01,209 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:11,256 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:21,304 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:31,411 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:41,459 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:06:51,506 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:07:01,617 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:07:09,677 [INFO] HTTP Request: POST https://api.telegram.org/bot8392930347:AAE048E2AYEsDTG9dtLzddatV9VSVkwYppE/getUpdates "HTTP/1.1 200 OK"
+2025-11-25 00:07:09,677 [INFO] Application is stopping. This might take a moment.
+2025-11-25 00:07:09,678 [INFO] Application.stop() complete
