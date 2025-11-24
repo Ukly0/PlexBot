@@ -32,8 +32,7 @@ def get_message_link(message) -> str:
 async def run_download(cmd: str, retries: int = 3, delay: int = 5) -> bool:
     for attempt in range(1, retries + 1):
         logging.info("Attempt %s of %s: %s", attempt, retries, cmd)
-        proc = await asyncio.to_thread(
-            asyncio.subprocess.create_subprocess_shell,
+        proc = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -213,10 +212,13 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             file_name = message.document.file_name
         elif message.video:
             file_name = message.video.file_name
+        context.chat_data["pending_link"] = link
         if file_name:
-            context.chat_data["pending_link"] = link
             context.chat_data["pending_filename"] = file_name
-            await prompt_tmdb_from_filename(message, context, file_name)
+            await auto_match_and_prompt_category(message, context, file_name)
+            return
+        if message.text:
+            await auto_match_and_prompt_category(message, context, message.text)
             return
         await message.reply_text("Set a destination first with /buscar.")
         return
