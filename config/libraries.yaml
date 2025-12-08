@@ -22,3 +22,7 @@ libraries:
   - name: Movies3D
     type: movies
     root: /media/storage/data/media/movies_3d
+
+download:
+  # Optional: dedicated TDL session directory to avoid DB locks with other clients.
+  # tdl_home: /home/ukiyo/.tdl-plexbot

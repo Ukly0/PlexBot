@@ -15,7 +15,7 @@ class TMDbItem:
     id: int
     title: str
     year: Optional[int]
-    type: str  # "movie" o "tv"
+    type: str  # "movie" or "tv"
     poster: Optional[str]
     popularity: float = 0.0
     rating: float = 0.0
@@ -35,7 +35,7 @@ def _headers() -> Optional[dict]:
     token = os.getenv("TMDB_API_KEY")
     if not token:
         global _tmdb_last_error
-        _tmdb_last_error = "Falta TMDB_API_KEY"
+        _tmdb_last_error = "Missing TMDB_API_KEY"
         return None
     return {"Authorization": f"Bearer {token}"}
 
@@ -62,7 +62,7 @@ def tmdb_search(query: str, limit: int = 10) -> List[TMDbItem]:
         return []
     items: List[TMDbItem] = []
     try:
-        # Buscar movies y tv por separado para mejor control
+        # Search movies and TV separately for better control
         for kind, endpoint in (("movie", "search/movie"), ("tv", "search/tv")):
             r = requests.get(
                 f"{TMDB_BASE}/{endpoint}",
@@ -71,7 +71,7 @@ def tmdb_search(query: str, limit: int = 10) -> List[TMDbItem]:
                 timeout=10,
             )
             if r.status_code == 401:
-                _tmdb_last_error = "API key inválida o token V4 incorrecto"
+                _tmdb_last_error = "Invalid API key or V4 token"
                 return []
             r.raise_for_status()
             for d in r.json().get("results", []) or []:
@@ -118,7 +118,7 @@ def tmdb_seasons(tv_id: int) -> List[TMDbSeason]:
             timeout=10,
         )
         if r.status_code == 401:
-            _tmdb_last_error = "API key inválida o token V4 incorrecto"
+            _tmdb_last_error = "Invalid API key or V4 token"
             return []
         r.raise_for_status()
         seasons = r.json().get("seasons", []) or []

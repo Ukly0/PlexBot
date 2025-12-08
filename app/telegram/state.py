@@ -4,7 +4,6 @@ STATE_SEARCH = "search_query"
 STATE_MANUAL_TITLE = "manual_title"
 STATE_MANUAL_SEASON = "manual_season"
 
-
 def set_state(user_data: Dict, state: Optional[str]) -> None:
     if state:
         user_data["awaiting"] = state
@@ -24,4 +23,5 @@ def reset_flow_state(context) -> None:
         "results_page",
     ]:
         context.user_data.pop(key, None)
-    context.chat_data.pop("tdl_extra_flags", None)
+    for key in ["tdl_extra_flags", "download_dir", "season_hint", "active_selection", "selected_type"]:
+        context.chat_data.pop(key, None)

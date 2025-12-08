@@ -1,113 +1,51 @@
-# Telegram PlexBot 🎬
+# PlexBot
 
-**PlexBot** is a Python script that automates the downloading and organizing of multimedia content — including movies, TV series, anime, documentaries, and docu-series — into structured directories suitable for media servers like Plex, Jellyfin, or Emby. It uses the powerful [TDL Telegram Downloader](https://github.com/iyear/tdl-telegram) to download content directly from Telegram messages.
+PlexBot is a Telegram bot that pulls media from Telegram messages using [TDL](https://github.com/iyear/tdl-telegram), matches titles with TMDb, and stores everything in a Plex-friendly library layout.
 
-![Example Gif](https://github.com/Ukly0/PlexBot/blob/main/example.gif)
+## What it does
+- Accepts Telegram links or forwarded media (documents/videos/photos/audio).
+- Searches TMDb to classify movies/series/anime/docuseries/documentaries and builds destination folders automatically once you pick a title.
+- If you paste a link or file without a destination, the bot first asks TMDb (or manual) and a category (Movies/Series/etc.), then downloads directly to the chosen library.
+- Concurrent downloads per chat (default max 3).
+- Library scan helpers and simple DB search/stats commands.
 
-## 🧠 Features
+## Commands (English)
+- `/start` — show help.
+- `/search` (alias `/buscar`) — search TMDb and set the destination library.
+- `/menu` — quick actions (search, DB search/stats, scan libraries).
+- `/dbsearch <text>` — search stored shows; `/dbstats` — quick DB metrics.
+- `/scan` — rescan configured libraries and sync DB.
+- `/clean_tmp` — remove leftover auto-download temp folders (not commonly needed now).
+- `/cancel` — cancel the current flow and stop running downloads for this chat.
+- `/cancel_all` — cancel flow and stop running + queued downloads for this chat.
+- `/season <n>` (alias `/temporada`) — switch the active series/docuseries season without reselecting the show.
 
-- Telegram bot integration for easy interaction
-- Accepts both direct media links and attached files from Telegram
-- Automatically sorts content into:
-  - Movies
-  - TV Series
-  - Anime
-  - Docu-Series
-  - Documentaries
-- Handles multi-season folder creation
-- Detects and downloads full episode groups by just sending the **first episode link**
-- Automatically extracts `.rar` archives for:
-  - Series
-  - Docu-Series
-  - Anime
-- Compatible with Plex, Jellyfin, Emby, and other media servers
+## Directory structure (cleaned)
+- `app/` — application code.
+  - `telegram/` — bot entrypoint and handlers.
+  - `services/` — TMDb client, naming helpers, ingest/post-processing, download manager.
+  - `infra/` — env loader, DB session helper.
+- `config/` — settings loader (`libraries.yaml`), env helpers.
+- `fs/` — filesystem scanner utilities.
+- `store/` — database models/repos.
+- `cli/` — maintenance scripts (DB and library seeding/scans).
+- Removed legacy/unused: `mediamarauder.py`, `bot/add_flow.py`, `test_regex.py`, legacy README in Chinese.
 
-## 📁 Directory Structure
+## Setup
+1. Install Python deps: `pip install -r requirements.txt`.
+2. Install TDL and log in: `go install github.com/iyear/tdl-telegram/cmd/tdl@latest` (or download a release) and run `tdl login`.
+3. Set environment:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TMDB_API_KEY`
+   - Optional: `PLEX_DB_URL` (defaults to sqlite:///plexbot.db)
+   - Optional: `TDL_HOME` to isolate the TDL session (defaults to `~/.tdl-plexbot` in the bot)
+4. Configure `config/libraries.yaml` with your libraries (movie/series/anime/docuseries/documentary roots).
+5. Run: `python -m app.telegram.main`.
 
-By default, PlexBot organizes files under:
-
-```
-/media/disk/
-├── Movies/
-├── Series/<Series Name>/Season XX/
-├── Anime/<Anime Name>/Season XX/
-├── DocuSeries/<Title>/Season XX/
-└── Documentaries/
-```
-
-## ⚙️ Requirements
-
-- Python 3.8+
-- [TDL](https://github.com/iyear/tdl-telegram) installed and working in terminal
-- `unrar` installed on your system
-- Python dependencies:
-  - `python-telegram-bot`
-  - `nest_asyncio`
-
-## 📦 Installation
-
-1. Clone this repository:
-
-```bash
-git clone https://github.com/Ukly0/PlexBot.git
-cd PlexBot
-```
-
-2. Install required packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Set your `BOT_TOKEN` and `ADMIN_CHAT_ID` in the script.
-
-4. Ensure `tdl` is functional in your command line.
-
-## 🚀 Usage
-
-1. **Run the bot:**
-
-```bash
-python PlexBot.py
-```
-
-2. **Telegram Setup:**
-
-- Add your bot to a Telegram **group**.
-- Set the group to **public**. This is essential for `tdl` to generate links from attached files.
-- Make sure your bot has permission to read messages and media.
-
-3. **Interact via Commands:**
-
-Use these Telegram commands to set the media category:
-
-- `/peliculas` 🎬 — Save to the Movies folder
-- `/serie` 📺 — Start a prompt to name the series and specify the season
-- `/anime` ✨ — Start setup for anime series
-- `/docuseries` 📼 — Organize as docu-series
-- `/documentales` — Save to Documentaries folder
-
-4. **Send Content:**
-
-You can send either:
-
-- A **Telegram link** to a message (e.g., from a channel or group)
-- **Media content directly** (video, document, audio, etc.)
-
-PlexBot will:
-
-- Use `tdl` to download the content
-- Organize it in the correct directory
-- If part of a **grouped message (like episodes)**, it will automatically download the **entire group**, even if only the first link is provided
-- Automatically **extract `.rar` files** for series, anime, and docu-series
-
-## 🙌 Credits
-
-PlexBot uses:
-
-- [TDL Telegram Downloader](https://github.com/iyear/tdl-telegram) by [@iyear](https://github.com/iyear)
-- [`python-telegram-bot`](https://github.com/python-telegram-bot/python-telegram-bot)
-
-## 📄 License
-
-MIT License
+## Notes
+- Temp auto-download folders are only used if you re-enable that mode; otherwise downloads go straight to the chosen library.
+- If TDL cannot export metadata for a link (no access), the bot will still try TMDb using the filename or link text before download.
+- Adjust per-chat concurrency in `DownloadManager(max_concurrent=3)` inside `bot/handlers/download.py`.
+- Default TDL template includes `--group` so albums/multi-part posts (zip/rar splits, episodic groups) download together.
+- You can set a dedicated TDL session dir via `TDL_HOME` or `download.tdl_home` in `config/libraries.yaml` to avoid DB locks with other clients.
+- The TDL template is escaped to pass `{{ .FileName }}` so downloaded files keep their original filename (incl. extensión) before post-processing.

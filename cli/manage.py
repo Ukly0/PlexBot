@@ -1,14 +1,14 @@
 # cli/manage.py
 """
-CLI de mantenimiento del proyecto.
-Comandos:
-  - init-db                      Crea tablas en la BD
-  - seed-libs                    Inserta bibliotecas desde config/libraries.yaml (idempotente)
-  - libs                         Lista bibliotecas registradas
-  - scan [--all|--type T|--library NOMBRE]  Escanea el FS y vuelca Show/Season/Episode
-  - stats                        Muestra métricas rápidas
+Maintenance CLI.
+Commands:
+  - init-db                      Create tables
+  - seed-libs                    Insert libraries from config/libraries.yaml (idempotent)
+  - libs                         List registered libraries
+  - scan [--all|--type T|--library NAME]  Scan FS and ingest Show/Season/Episode
+  - stats                        Quick metrics
 
-Uso recomendado (desde la raíz del proyecto):
+Recommended usage (from repo root):
     python -m cli.manage init-db
     python -m cli.manage seed-libs
     python -m cli.manage libs
@@ -43,14 +43,14 @@ def make_session() -> tuple[Session, object]:
 
 
 # ----------------------------
-# Comandos
+# Commands
 # ----------------------------
 
 def cmd_init_db(args):
     st = load_settings()
     engine = make_engine(st.db_url)
     Base.metadata.create_all(bind=engine)
-    print("✔ Tablas creadas (o ya existían). DB:", st.db_url)
+    print("✔ Tables created (or already existed). DB:", st.db_url)
 
 
 def cmd_seed_libs(args):
@@ -59,7 +59,7 @@ def cmd_seed_libs(args):
         repo = LibraryRepo(s)
         inserted = 0
         for cfg in st.libraries:
-            # idempotente por name o root
+            # idempotent by name or root
             exists = s.execute(
                 select(Library).where(or_(Library.name == cfg.name, Library.root == cfg.root))
             ).scalar_one_or_none()
@@ -69,10 +69,10 @@ def cmd_seed_libs(args):
             inserted += 1
         if inserted:
             s.commit()
-        print(f"✔ Librerías nuevas insertadas: {inserted}")
-        # Mostrar
+        print(f"✔ New libraries inserted: {inserted}")
+        # Show
         libs = repo.list_all()
-        print("Librerías registradas:")
+        print("Registered libraries:")
         for l in libs:
             print(f" - {l.id}: {l.name} [{l.type.value}] -> {l.root}")
     finally:
@@ -85,9 +85,9 @@ def cmd_libs(args):
         repo = LibraryRepo(s)
         libs = repo.list_all()
         if not libs:
-            print("No hay bibliotecas registradas. Ejecuta: python -m cli.manage seed-libs")
+            print("No libraries registered. Run: python -m cli.manage seed-libs")
             return
-        print("Bibliotecas:")
+        print("Libraries:")
         for l in libs:
             print(f"{l.id:>3}  {l.name:<16}  {l.type.value:<12}  {l.root}")
     finally:
@@ -106,7 +106,7 @@ def cmd_scan(args):
         if args.library:
             lib = LibraryRepo(s).by_name(args.library)
             if not lib:
-                print(f"✘ No existe la biblioteca con name='{args.library}'. Usa 'libs' para listar.")
+                print(f"✘ Library name='{args.library}' not found. Use 'libs' to list.")
                 return
             stats = scan_library(s, lib, verbose=verbose)
             print(f"✔ Scan LIB:{lib.name} → +{stats.shows_new} shows, +{stats.seasons_new} seasons, +{stats.episodes_new} episodes (files seen: {stats.files_seen})")
@@ -116,7 +116,7 @@ def cmd_scan(args):
             try:
                 lib_type = LibraryType(args.type)
             except ValueError:
-                print("✘ Tipo inválido. Usa: series | anime | docuseries | documentary | movie")
+                print("✘ Invalid type. Use: series | anime | docuseries | documentary | movie")
                 return
             stats = scan_libraries_by_type(s, lib_type, verbose=verbose)
             print(f"✔ Scan TYPE:{lib_type.value} → +{stats.shows_new} shows, +{stats.seasons_new} seasons, +{stats.episodes_new} episodes (files seen: {stats.files_seen})")
@@ -128,24 +128,24 @@ def cmd_scan(args):
 def cmd_stats(args):
     s, _ = make_session()
     try:
-        # Shows por tipo
+        # Shows by type
         rows = s.execute(
             select(Show.kind, func.count()).group_by(Show.kind).order_by(Show.kind)
         ).all()
-        print("Shows por tipo:")
+        print("Shows by type:")
         if not rows:
-            print("  (vacío)")
+            print("  (empty)")
         else:
             for kind, count in rows:
                 print(f"  - {kind.value:<12} {count}")
 
-        # Totales
+        # Totals
         tot_seasons = s.scalar(select(func.count()).select_from(Season)) or 0
         tot_episodes = s.scalar(select(func.count()).select_from(Episode)) or 0
-        print(f"Seasons totales:  {tot_seasons}")
-        print(f"Episodes totales: {tot_episodes}")
+        print(f"Total seasons:  {tot_seasons}")
+        print(f"Total episodes: {tot_episodes}")
 
-        # Top 10 shows (por nº de temporadas)
+        # Top 10 shows (by number of seasons)
         top = s.execute(
             select(Show.title, func.count(Season.id).label("n"))
             .join(Season, Season.show_id == Show.id, isouter=True)
@@ -154,7 +154,7 @@ def cmd_stats(args):
             .limit(10)
         ).all()
         if top:
-            print("Top 10 por nº de temporadas:")
+            print("Top 10 by # of seasons:")
             for title, n in top:
                 print(f"  - {title} ({n or 0})")
     finally:
@@ -166,27 +166,27 @@ def cmd_stats(args):
 # ----------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="cinebot-manage", description="CLI de mantenimiento")
+    p = argparse.ArgumentParser(prog="plexbot-manage", description="Maintenance CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("init-db", help="Crea tablas en la BD")
+    sp = sub.add_parser("init-db", help="Create DB tables")
     sp.set_defaults(func=cmd_init_db)
 
-    sp = sub.add_parser("seed-libs", help="Inserta bibliotecas desde config/libraries.yaml (idempotente)")
+    sp = sub.add_parser("seed-libs", help="Insert libraries from config/libraries.yaml (idempotent)")
     sp.set_defaults(func=cmd_seed_libs)
 
-    sp = sub.add_parser("libs", help="Lista bibliotecas registradas")
+    sp = sub.add_parser("libs", help="List registered libraries")
     sp.set_defaults(func=cmd_libs)
 
-    sp = sub.add_parser("scan", help="Escanea el FS y vuelca Show/Season/Episode")
+    sp = sub.add_parser("scan", help="Scan FS and ingest Show/Season/Episode")
     g = sp.add_mutually_exclusive_group()
-    g.add_argument("--all", action="store_true", help="Escanear TODAS las bibliotecas (por defecto si no pasas nada)")
-    g.add_argument("--type", choices=[t.value for t in LibraryType], help="Escanear por tipo (series, anime, docuseries, documentary, movie)")
-    g.add_argument("--library", help="Escanear una biblioteca por nombre (p. ej. SeriesDisk1)")
-    sp.add_argument("-v", "--verbose", action="store_true", help="Más salida de log")
+    g.add_argument("--all", action="store_true", help="Scan ALL libraries (default if nothing is passed)")
+    g.add_argument("--type", choices=[t.value for t in LibraryType], help="Scan by type (series, anime, docuseries, documentary, movie)")
+    g.add_argument("--library", help="Scan a library by name (e.g., SeriesDisk1)")
+    sp.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     sp.set_defaults(func=cmd_scan)
 
-    sp = sub.add_parser("stats", help="Muestra métricas rápidas (shows/seasons/episodes)")
+    sp = sub.add_parser("stats", help="Quick metrics (shows/seasons/episodes)")
     sp.set_defaults(func=cmd_stats)
 
     return p

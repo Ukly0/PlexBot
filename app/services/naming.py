@@ -9,6 +9,7 @@ RX_E_ONLY = re.compile(r"E(\d{1,3})", re.I)
 RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 -> S01E01
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
+INVALID_FS_CHARS = set('<>:"/\\|?*')
 
 
 def parse_season_episode(name: str, season_hint: Optional[int] = None) -> Tuple[Optional[int], Optional[int]]:
@@ -43,7 +44,7 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
     target = path.with_name(new_name)
     if target == path:
         return path
-    # evitar colisión
+    # Avoid collisions
     if target.exists():
         base = target.stem
         suffix = target.suffix
@@ -62,3 +63,14 @@ def bulk_rename(root: Path, title: str, season_hint: Optional[int]) -> None:
                 rename_video(p, title, season_hint)
             except Exception:
                 continue
+
+
+def safe_title(title: str) -> str:
+    """
+    Sanitize a title for filesystem use: strip, remove invalid characters, collapse whitespace.
+    """
+    if not title:
+        return "Content"
+    cleaned = "".join(" " if ch in INVALID_FS_CHARS else ch for ch in title)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
+    return cleaned or "Content"

@@ -2,7 +2,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from sqlalchemy import func
 
-from bot.db import get_session
+from app.infra.db import get_session
 from store.models import Show, Season
 
 PAGE_SIZE = 5

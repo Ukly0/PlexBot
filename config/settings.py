@@ -14,7 +14,10 @@ class LibraryCfg:
 
 @dataclass
 class DownloadCfg:
-    tdl_template: str = 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
+    # --group ensures multi-part albums (zip/rar split, episodic posts) are downloaded together.
+    # Template uses double-escaped braces so the final command gets {{ .FileName }} (keeps original filename with extension).
+    tdl_template: str = 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --group --reconnect-timeout 0 --template "{{{{ .FileName }}}}"'
+    tdl_home: str = os.getenv("TDL_HOME", os.path.expanduser("~/.tdl-plexbot"))
     extract_rar: bool = True
 
 @dataclass
@@ -37,6 +40,7 @@ def load_settings(yaml_path: str = "config/libraries.yaml") -> Settings:
     dl = data.get("download", {}) or {}
     download = DownloadCfg(
         tdl_template=dl.get("tdl_template", DownloadCfg.tdl_template),
+        tdl_home=dl.get("tdl_home", DownloadCfg.tdl_home),
         extract_rar=bool(dl.get("extract_rar", True)),
     )
 

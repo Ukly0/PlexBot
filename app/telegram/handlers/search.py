@@ -3,13 +3,8 @@ from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from bot.state import (
-    STATE_MANUAL_SEASON,
-    STATE_MANUAL_TITLE,
-    STATE_SEARCH,
-    set_state,
-)
-from core.tmdb import TMDbItem, TMDbSeason, tmdb_search, tmdb_seasons, tmdb_last_error
+from app.telegram.state import STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
+from app.services.tmdb_client import TMDbItem, TMDbSeason, tmdb_search, tmdb_seasons, tmdb_last_error
 from .download import finalize_selection, handle_download_message
 
 PAGE_SIZE = 5
@@ -121,7 +116,7 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     results: List[TMDbItem] = context.user_data.get("results_list") or []
     if not results:
-        await query.edit_message_text("No results loaded. Please run /buscar again.")
+        await query.edit_message_text("No results loaded. Please run /search again.")
         return
     await query.edit_message_text("Results:", reply_markup=build_results_keyboard(results, page))
     context.user_data["results_page"] = page
@@ -243,8 +238,16 @@ async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     context.user_data.clear()
     context.chat_data.pop("tdl_extra_flags", None)
-    context.chat_data.pop("download_dir", None)
-    await query.message.reply_text("Flow cancelled. Use /buscar to start over.")
+    for key in ["download_dir", "season_hint", "active_selection", "selected_type"]:
+        context.chat_data.pop(key, None)
+    mgr = context.bot_data.get("dl_manager")
+    cancelled = 0
+    if mgr and hasattr(mgr, "cancel_running"):
+        cancelled = await mgr.cancel_running(update.effective_chat.id)
+    msg = "Flow cancelled."
+    if cancelled:
+        msg += f" Cancelled {cancelled} running download(s)."
+    await query.message.reply_text(f"{msg} Use /search to start over.")
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):

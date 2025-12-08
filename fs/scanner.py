@@ -1,20 +1,20 @@
 # cinebot/services/scanner.py
 """
-Escáner del sistema de archivos (Fase 2)
-- Read-only: NO mueve ni crea nada. Solo indexa lo que existe.
-- Idempotente: repetir el escaneo no duplica registros.
-- Multi-disco: se ejecuta por Library (un root) y puedes encadenarlo para todas.
+Filesystem scanner (Phase 2)
+- Read-only: does NOT move or create files. Only indexes what exists.
+- Idempotent: re-running does not duplicate records.
+- Multi-disk: run per Library root; can chain for all.
 
-Reglas clave:
-- Show = carpeta de primer nivel: <root>/<Show>/...
-- Season = carpeta de segundo nivel "Season N" | "Temporada N" | "SNN" | "TNN"
-            o bien deducida desde el nombre del archivo (SxxEyy, 1x02, Eyy)
-            (si no se deduce, fallback Season 1).
-- Episode = fichero de vídeo válido; number opcional si no se puede inferir.
+Key rules:
+- Show = first-level folder: <root>/<Show>/...
+- Season = second-level folder "Season N" | "Temporada N" | "SNN" | "TNN"
+           or inferred from filename (SxxEyy, 1x02, Eyy)
+           (fallback to Season 1 if none detected).
+- Episode = valid video file; number optional if it can’t be inferred.
 
-Uso típico:
+Typical usage:
     stats = scan_library(session, library, verbose=True)
-    # o
+    # or
     scan_all_libraries(session, verbose=True)
 """
 
@@ -34,11 +34,11 @@ from store.repos import LibraryRepo, ShowRepo, SeasonRepo, EpisodeRepo
 
 
 # ----------------------------
-# Config de naming/parse
+# Naming/parse config
 # ----------------------------
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
-SUB_EXT = {".srt", ".ass"}  # si no quieres indexar subs, quítalos de VALID_EXT
+SUB_EXT = {".srt", ".ass"}  # remove from VALID_EXT if you don’t want subtitles indexed
 VALID_EXT = VIDEO_EXT 
 
 IGNORED_EXT = {".rar", ".zip", ".7z", ".nfo"}
@@ -51,11 +51,11 @@ RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 → S01E01 (opcional)
 
 
 # ----------------------------
-# Utilidades de naming
+# Naming helpers
 # ----------------------------
 
 def safe_unicode(s: str) -> str:
-    # Reemplaza caracteres inválidos por '?'
+    # Replace invalid chars with '?'
     return s.encode("utf-8", "replace").decode("utf-8")
 
 def _strip_diacritics(s: str) -> str:
@@ -63,7 +63,7 @@ def _strip_diacritics(s: str) -> str:
 
 def slugify(title: str) -> str:
     """
-    Slug simple sin dependencias: minúsculas, sin tildes, separadores→'-', sin ruido típico.
+    Simple slug: lowercase, no diacritics, separators -> '-', strip common noise.
     """
     title = re.sub(r"\[(?:.+?)\]|\((?:1080p|720p|x264|x265|WEB[-.]DL|BluRay|HDTV).*?\)", "", title, flags=re.I)
     title = title.replace(".", " ")
@@ -86,7 +86,7 @@ def season_from_dirname(name: str) -> Optional[int]:
 
 def parse_season_episode_from_filename(fname: str) -> Tuple[Optional[int], Optional[int]]:
     """
-    Devuelve (season, episode) si se pueden inferir, si no devuelve (None, None) o (S,None)/(None,E).
+    Return (season, episode) if inferred, otherwise (None, None) or (S,None)/(None,E).
     """
     m = RX_SE.search(fname)
     if m:
@@ -95,12 +95,12 @@ def parse_season_episode_from_filename(fname: str) -> Tuple[Optional[int], Optio
         e = g[1] or g[3]
         return (int(s) if s else None, int(e) if e else None)
 
-    # Eyy solo si la temporada ya se conoce por contexto (quien llama decide)
+    # Eyy only if season known by context (caller decides)
     m = RX_EONLY.search(fname)
     if m:
         return (None, int(m.group(1)))
 
-    # 101 → S01E01 (muy opcional; descomenta si quieres arriesgar colisiones)
+    # 101 → S01E01 (optional; may cause collisions)
     m = RX_THREE.search(fname)
     if m:
         s, e = int(m.group(1)), int(m.group(2))
@@ -129,24 +129,24 @@ class ScanStats:
 
 
 # ----------------------------
-# Núcleo del escaneo
+# Scan core
 # ----------------------------
 
 def _iter_valid_files(root: Path) -> Iterable[Path]:
     """
-    Recorre recursivamente el root y arroja SOLO archivos válidos (extensiones admitidas),
-    ignorando ocultos, 'sample', y extensiones ignoradas.
+    Walk recursively under root and yield ONLY valid files (allowed extensions),
+    skipping hidden entries, 'sample' patterns, and ignored extensions.
     """
     if not root.exists():
         return
     for p in root.rglob("*"):
-        # Ignorar directorios ocultos/conocidos
+        # Skip hidden/ignored dirs
         if p.is_dir():
             if p.name in IGNORED_DIRS or p.name.startswith("."):
                 continue
             else:
-                continue  # los archivos saldrán cuando p sea file
-        # Archivos
+                continue  # files will be yielded when p is a file
+        # Files
         if p.name.startswith("."):
             continue
         if IGNORED_FILE_PATTERNS.search(p.name):
@@ -162,10 +162,10 @@ def _iter_valid_files(root: Path) -> Iterable[Path]:
 
 def _show_and_season_from_path(file_path: Path, lib_root: Path) -> Tuple[str, Optional[int], Optional[int]]:
     """
-    Determina show_name, season_number y year a partir de la ruta:
-    - show_name = primer segmento bajo root
-    - season_number = por carpeta de temporada o por nombre de archivo
-    - year = si el nombre del show tiene formato 'Nombre(YYYY)'
+    Derive show_name, season_number, and year from a path:
+    - show_name = first segment under root
+    - season_number = from season folder or filename
+    - year = if show name looks like 'Name(YYYY)'
     """
     rel = file_path.relative_to(lib_root)
     parts = rel.parts
@@ -198,7 +198,7 @@ def _episode_number_from_filename(file_path: Path, season_number_hint: Optional[
     s, e = parse_season_episode_from_filename(file_path.name)
     if e is not None:
         return e
-    # si solo hay Eyy y nos pasaron hint de temporada, lo respetamos y devolvemos Eyy
+    # if only Eyy and season hint provided, respect hint and return episode
     m = RX_EONLY.search(file_path.name)
     if m and season_number_hint:
         return int(m.group(1))
@@ -212,13 +212,13 @@ def scan_library(
     verbose: bool = False,
 ) -> ScanStats:
     """
-    Escanea una Library concreta (root) y vuelca Show/Season/Episode.
+    Scan a given Library root and persist Show/Season/Episode.
 
-    - Show único por (slug, kind).
-    - Season única por (show, library, number).
-    - Episode único por (season, file_path).
+    - Unique Show per (slug, kind).
+    - Unique Season per (show, library, number).
+    - Unique Episode per (season, file_path).
 
-    Devuelve contadores de elementos nuevos.
+    Returns counters of new elements.
     """
     stats = ScanStats()
     root = Path(library.root)
@@ -241,7 +241,7 @@ def scan_library(
             show_name, season_num, show_year = _show_and_season_from_path(file, root)
         except Exception as e:
             if verbose:
-                print(f"[scan] Saltando {file}: {e}")
+                print(f"[scan] Skipping {file}: {e}")
             continue
 
         show_slug = slugify(show_name)
@@ -253,7 +253,7 @@ def scan_library(
         if show_id is None:
             show = show_repo.get_or_create(title=show_name, slug=show_slug, kind=kind, year=show_year)
             if show.id not in show_cache.values():
-                stats.shows_new += 1 if s.is_modified(show, include_collections=False) else 0  # aproximación
+                stats.shows_new += 1 if s.is_modified(show, include_collections=False) else 0  # approximate
             show_id = show.id
             show_cache[key] = show_id
 
@@ -263,7 +263,7 @@ def scan_library(
         if season_id is None:
             default_season_dir_name = f"Season {season_num}"
             season_dir = Path(root / show_name / default_season_dir_name)
-            # <-- Asegúrate de limpiar el path
+            # Ensure path is sanitized
             safe_season_dir = safe_unicode(str(season_dir))
             season = season_repo.upsert(
                 show_id=show_id,
@@ -272,8 +272,7 @@ def scan_library(
                 path=safe_season_dir,
             )
             if season.id not in season_cache.values():
-                # si realmente se insertó nuevo, el repo no nos lo dice,
-                # así que comprobamos si estaba en cache (heurística simple).
+                # repo doesn't tell if it was newly inserted; rely on cache heuristic
                 stats.seasons_new += 1 if s.is_modified(season, include_collections=False) else 0
             season_id = season.id
             season_cache[skey] = season_id
@@ -287,7 +286,7 @@ def scan_library(
             pass
 
         before = s.new.copy()
-        # <-- Limpia el file_path antes de guardar
+        # Sanitize file_path before storing
         safe_file_path = safe_unicode(str(file))
         episode = episode_repo.upsert(
             season_id=season_id,
@@ -295,7 +294,7 @@ def scan_library(
             number=ep_num,
             size=size,
         )
-        # Contar "nuevo" de forma heurística
+        # Heuristic for "new" count
         stats.episodes_new += 1 if episode in s.new or len(before) != len(s.new) else 0
 
     s.commit()
@@ -311,7 +310,7 @@ def scan_libraries_by_type(
     verbose: bool = False,
 ) -> ScanStats:
     """
-    Escanea todas las Libraries de un tipo (series, anime, docuseries, documentary, movie).
+    Scan all libraries of a given type (series, anime, docuseries, documentary, movie).
     """
     stats = ScanStats()
     libs = LibraryRepo(s).list_by_type(lib_type)
@@ -326,7 +325,7 @@ def scan_all_libraries(
     verbose: bool = False,
 ) -> ScanStats:
     """
-    Escanea TODAS las Libraries registradas.
+    Scan ALL registered libraries.
     """
     stats = ScanStats()
     for t in (

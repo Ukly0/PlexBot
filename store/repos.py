@@ -1,10 +1,10 @@
 # cinebot/db/repositories.py
 """
-Capa de acceso a datos (DAO) sobre SQLAlchemy 2.x
-- Idempotente: usa get_or_create / upsert respetando las unicidades del modelo.
-- Enfocado a las operaciones que necesitará el escáner y el bot.
+Data access layer on SQLAlchemy 2.x
+- Idempotent: uses get_or_create / upsert honoring model uniqueness.
+- Focused on operations needed by the scanner and the bot.
 
-Tablas esperadas (db/models.py):
+Expected tables (store/models.py):
 - Library(id, name*, type, root*, created_at)
 - Show(id, title, slug, kind, year?, tmdb_id?, tvdb_id?, imdb_id?)
   * UNIQUE(slug, kind)
@@ -12,17 +12,18 @@ Tablas esperadas (db/models.py):
   * UNIQUE(show_id, library_id, number)
 - Episode(id, season_id, number?, file_path, size?, hash?, message_link?)
   * UNIQUE(season_id, file_path)
-- ChatState(chat_id PK, current_show_id?, current_library_id?, current_season?)
 """
 
 from __future__ import annotations
 import enum
 import re
+from pathlib import Path
 from typing import Optional, Tuple, List, Iterable, TypeVar
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from .models import Library, LibraryType, Show, Season, Episode  # ChatState se importa on-demand
+from fs.scanner import season_from_dirname, parse_season_episode_from_filename, safe_unicode
+from .models import Library, LibraryType, Show, Season, Episode  # ChatState is imported on-demand
 
 T = TypeVar("T")
 Page = Tuple[List[T], int]  # (items, total)
@@ -36,25 +37,25 @@ def _paginate(stmt, page: int, per_page: int):
     page = max(1, int(page or 1))
     per_page = max(1, int(per_page or 20))
     total = None
-    # total con subquery para no afectar el stmt original
+    # total with subquery so we don't mutate the original stmt
     total_stmt = select(func.count()).select_from(stmt.subquery())
     return page, per_page, total_stmt
 
 
 def _show_and_season_from_path(file_path: Path, lib_root: Path) -> Tuple[str, Optional[int], Optional[int]]:
     """
-    Determina show_name, season_number y year a partir de la ruta:
-    - show_name = primer segmento bajo root
-    - season_number = por carpeta de temporada o por nombre de archivo
-    - year = si el nombre del show tiene formato 'Nombre(YYYY)'
+    Derive show_name, season_number, and year from a path:
+    - show_name = first segment under root
+    - season_number = from season folder or filename
+    - year = if show name looks like 'Name(YYYY)'
     """
     rel = file_path.relative_to(lib_root)
     parts = rel.parts
     if len(parts) < 1:
-        raise ValueError(f"Ruta inesperada bajo {lib_root}: {file_path}")
+        raise ValueError(f"Unexpected path under {lib_root}: {file_path}")
 
     raw_show_name = safe_unicode(parts[0])
-    # Extrae año si está en el formato 'Nombre(YYYY)'
+    # Extract year if format 'Name(YYYY)'
     m = re.match(r"^(.*)\((\d{4})\)$", raw_show_name)
     if m:
         show_name = m.group(1).strip()
@@ -63,7 +64,7 @@ def _show_and_season_from_path(file_path: Path, lib_root: Path) -> Tuple[str, Op
         show_name = raw_show_name
         year = None
 
-    # ...season_number como antes...
+    # season_number detection
     season_number = None
     if len(parts) >= 2:
         season_number = season_from_dirname(parts[1])
@@ -99,7 +100,7 @@ class LibraryRepo:
 
     def upsert_from_cfg(self, name: str, t: LibraryType, root: str) -> Library:
         """
-        Inserta una Library si no existe por name o root. Si existe, la retorna sin modificarla.
+        Insert a Library if it does not exist by name or root. If it exists, return it unchanged.
         """
         q = select(Library).where((Library.name == name) | (Library.root == root))
         obj = self.s.scalars(q).first()
@@ -138,7 +139,7 @@ class ShowRepo:
     ) -> Show:
         obj = self.by_slug_kind(slug, kind)
         if obj:
-            # Si el año es distinto y el nuevo año no es None, actualiza
+            # If year differs and new year is provided, update it (optionally sync path elsewhere)
             if year is not None and obj.year != year:
                 obj.year = year
                 self.s.flush()
@@ -217,7 +218,7 @@ class SeasonRepo:
     ) -> Season:
         obj = self.get(show_id, library_id, number)
         if obj:
-            # si quisieras sincronizar path, podrías actualizarlo aquí (opcional)
+            # If you need to sync path, update here (optional)
             return obj
         obj = Season(show_id=show_id, library_id=library_id, number=number, path=path)
         self.s.add(obj)
