@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Optional
 import zipfile
 
-from app.services.naming import bulk_rename
+from app.services.naming import bulk_rename, rename_movie_files
 
 SERIES_TYPES = {"series", "anime", "docuseries"}
+MOVIE_TYPES = {"movies", "documentary"}
 
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
 ARCHIVE_EXT = {".rar", ".zip", ".r00", ".001"}
@@ -44,10 +45,18 @@ def extract_archives(root: Path) -> None:
             logging.error("Error extracting %s: %s", arc, e)
 
 
-def process_directory(directory: str, title: str, season_hint: Optional[int], lib_type: Optional[str] = None) -> None:
+def process_directory(
+    directory: str,
+    title: str,
+    season_hint: Optional[int],
+    lib_type: Optional[str] = None,
+    year: Optional[int] = None,
+) -> None:
     root = Path(directory)
     if not root.exists():
         return
     extract_archives(root)
     if lib_type in SERIES_TYPES:
         bulk_rename(root, title, season_hint)
+    elif lib_type in MOVIE_TYPES:
+        rename_movie_files(root, title, year)

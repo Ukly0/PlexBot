@@ -262,7 +262,17 @@ async def finalize_selection(
     if pending_link:
         title = context.user_data.get("manual_title") or original_title_en or label or "Content"
         season_hint = context.chat_data.get("season_hint")
-        await queue_download_task(update.effective_message, context, pending_link, download_dir, title, season_hint)
+        use_group = bool(context.chat_data.pop("pending_link_is_text", False))
+        await queue_download_task(
+            update.effective_message,
+            context,
+            pending_link,
+            download_dir,
+            title,
+            season_hint,
+            year,
+            use_group,
+        )
         if should_reset_after_enqueue(context):
             reset_destination(context)
 
@@ -274,6 +284,8 @@ async def queue_download_task(
     download_dir: str,
     title: str,
     season_hint: Optional[int],
+    year: Optional[int] = None,
+    use_group: bool = False,
 ):
     tdl_template = load_settings().download.tdl_template
     cmd = tdl_template.format(url=link, dir=download_dir)
@@ -285,9 +297,11 @@ async def queue_download_task(
             os.makedirs(tdl_home, exist_ok=True)
         except Exception as e:
             logging.warning("Could not create TDL_HOME %s: %s", tdl_home, e)
-    extra_flags = context.chat_data.get("tdl_extra_flags")
+    extra_flags = context.chat_data.get("tdl_extra_flags") or ""
     if extra_flags and "--group" not in cmd:
         cmd = f"{cmd} {extra_flags}"
+    if use_group and "--group" not in cmd:
+        cmd = f"{cmd} --group"
 
     mgr: DownloadManager = context.bot_data.setdefault("dl_manager", DownloadManager(max_concurrent=3))
     path_clean = download_dir
@@ -320,8 +334,12 @@ async def queue_download_task(
                 except Exception as e:
                     logging.debug("Perms skipped for %s: %s", p, e)
 
+    status_holder: dict[str, Optional[object]] = {"msg": None}
+
     async def _run():
-        status_msg = await message.reply_text(f"▶️ Starting download: {title}")
+        status_msg = status_holder.get("msg")
+        if status_msg is None:
+            status_msg = await message.reply_text(f"▶️ Starting download: {title}")
 
         async def report_progress(pct: int, line: str):
             try:
@@ -345,7 +363,10 @@ async def queue_download_task(
         if ok:
             try:
                 lib_type = context.chat_data.get("selected_type")
-                process_directory(path_clean, title, season_hint, lib_type)
+                selection = context.chat_data.get("active_selection") or {}
+                title_for_post = selection.get("title") or title
+                selection_year = selection.get("year", year)
+                process_directory(path_clean, title_for_post, season_hint, lib_type, selection_year)
             except Exception as e:
                 logging.error("Post-process failed: %s", e)
             try:
@@ -361,13 +382,9 @@ async def queue_download_task(
                 await status_msg.edit_text("❌ Download failed. Check the link and try again.")
             except Exception:
                 await message.reply_text("❌ Download failed. Check the link and try again.")
-
     position = mgr.enqueue(message.chat_id, _run)
-    if position == 1 and mgr.running.get(message.chat_id, 0) < mgr.max_concurrent:
-        await message.reply_text("⏳ Download queued and starting...")
-    else:
-        await message.reply_text(f"⏳ Queued at position #{position} for download: {title}")
-
+    status_msg = await message.reply_text(f"⏳ {title}\nQueued #{position}")
+    status_holder["msg"] = status_msg
 
 def _guess_title_from_filename(fname: str) -> str:
     stem = os.path.splitext(fname)[0]
@@ -429,8 +446,10 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
     link = None
+    is_text_link = False
     if message.text and "https://t.me" in message.text:
         link = message.text.strip()
+        is_text_link = True
     elif any([message.document, message.video, message.audio, message.photo]):
         link = get_message_link(message)
 
@@ -448,6 +467,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             file_name = message.video.file_name
 
         context.chat_data["pending_link"] = link
+        context.chat_data["pending_link_is_text"] = is_text_link
         if file_name:
             context.chat_data["pending_filename"] = file_name
             await prompt_tmdb_from_filename(message, context, file_name)
@@ -460,7 +480,9 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
 
     title = context.user_data.get("manual_title") or context.user_data.get("pending_show", {}).get("label", "Content")
     season_hint = context.chat_data.get("season_hint")
-    await queue_download_task(message, context, link, download_dir, title, season_hint)
+    selection = context.chat_data.get("active_selection") or {}
+    selection_year = selection.get("year")
+    await queue_download_task(message, context, link, download_dir, title, season_hint, selection_year, is_text_link)
     if should_reset_after_enqueue(context):
         reset_destination(context)
 

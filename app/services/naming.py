@@ -74,3 +74,31 @@ def safe_title(title: str) -> str:
     cleaned = "".join(" " if ch in INVALID_FS_CHARS else ch for ch in title)
     cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
     return cleaned or "Content"
+
+
+def _movie_title_with_year(title: str, year: Optional[int]) -> str:
+    base = safe_title(title)
+    base = re.sub(r"\s*\(\d{4}\)$", "", base).strip()
+    if year:
+        base = f"{base} ({year})"
+    return base or "Content"
+
+
+def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:
+    target_base = _movie_title_with_year(title, year)
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix.lower() in VIDEO_EXT:
+            try:
+                target = p.with_name(f"{target_base}{p.suffix.lower()}")
+                if target == p:
+                    continue
+                if target.exists():
+                    base = target.stem
+                    suffix = target.suffix
+                    n = 1
+                    while target.exists():
+                        target = target.with_name(f"{base}-dup{n}{suffix}")
+                        n += 1
+                p.rename(target)
+            except Exception:
+                continue

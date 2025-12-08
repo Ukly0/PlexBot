@@ -14,9 +14,8 @@ class LibraryCfg:
 
 @dataclass
 class DownloadCfg:
-    # --group ensures multi-part albums (zip/rar split, episodic posts) are downloaded together.
     # Template uses double-escaped braces so the final command gets {{ .FileName }} (keeps original filename with extension).
-    tdl_template: str = 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --group --reconnect-timeout 0 --template "{{{{ .FileName }}}}"'
+    tdl_template: str = 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{{{ .FileName }}}}"'
     tdl_home: str = os.getenv("TDL_HOME", os.path.expanduser("~/.tdl-plexbot"))
     extract_rar: bool = True
 

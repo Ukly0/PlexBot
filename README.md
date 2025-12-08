@@ -46,6 +46,5 @@ PlexBot is a Telegram bot that pulls media from Telegram messages using [TDL](ht
 - Temp auto-download folders are only used if you re-enable that mode; otherwise downloads go straight to the chosen library.
 - If TDL cannot export metadata for a link (no access), the bot will still try TMDb using the filename or link text before download.
 - Adjust per-chat concurrency in `DownloadManager(max_concurrent=3)` inside `bot/handlers/download.py`.
-- Default TDL template includes `--group` so albums/multi-part posts (zip/rar splits, episodic groups) download together.
 - You can set a dedicated TDL session dir via `TDL_HOME` or `download.tdl_home` in `config/libraries.yaml` to avoid DB locks with other clients.
 - The TDL template is escaped to pass `{{ .FileName }}` so downloaded files keep their original filename (incl. extensión) before post-processing.
