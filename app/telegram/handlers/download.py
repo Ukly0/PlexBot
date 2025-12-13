@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Callable, Awaitable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import ContextTypes
 
 from app.services.naming import safe_title, parse_season_episode, VIDEO_EXT
@@ -25,6 +26,9 @@ TARGET_UID = 1000
 TARGET_GID = 1000
 DIR_MODE = 0o755
 FILE_MODE = 0o644
+# Rate-limit progress edits to avoid Telegram 429/timeout storms.
+PROGRESS_MIN_STEP = 2
+PROGRESS_MIN_INTERVAL = 5.0
 
 # Global lock to serialize TDL invocations. Re-bound per event loop to avoid
 # "Event loop is closed" when the app restarts.
@@ -107,6 +111,7 @@ async def run_download(
     proc: Optional[asyncio.subprocess.Process] = None
     last_line = ""
     lines: list[str] = []
+    max_tail = 50
     last_percent = -1
     last_emit = 0.0
     try:
@@ -134,7 +139,8 @@ async def run_download(
                     last_line = line.decode().strip()
                     if last_line:
                         lines.append(last_line)
-                    print("\r" + last_line, end="", flush=True)
+                        if len(lines) > max_tail:
+                            lines.pop(0)
                     if on_progress:
                         percents = re.findall(r"(\d{1,3})(?:\.\d+)?%", last_line)
                         if percents:
@@ -154,7 +160,6 @@ async def run_download(
                                 except Exception as cb_err:
                                     logging.debug("Progress callback failed: %s", cb_err)
                 await proc.wait()
-                print("")
                 if unregister_pid and proc.pid:
                     try:
                         unregister_pid(proc.pid)
@@ -170,8 +175,8 @@ async def run_download(
                     return True
                 logging.error("Download failed (attempt %s): %s", attempt, last_line)
                 if lines:
-                    tail = " | ".join(lines[-5:])
-                    logging.error("TDL output tail: %s", tail)
+                    tail = " | ".join(lines[-8:])
+                    logging.error("TDL tail: %s", tail)
                 if attempt < retries:
                     await asyncio.sleep(delay)
     except asyncio.CancelledError:
@@ -272,6 +277,7 @@ async def finalize_selection(
             season_hint,
             year,
             use_group,
+            pending_link,
         )
         if should_reset_after_enqueue(context):
             reset_destination(context)
@@ -286,6 +292,7 @@ async def queue_download_task(
     season_hint: Optional[int],
     year: Optional[int] = None,
     use_group: bool = False,
+    display_name: Optional[str] = None,
 ):
     tdl_template = load_settings().download.tdl_template
     cmd = tdl_template.format(url=link, dir=download_dir)
@@ -303,8 +310,12 @@ async def queue_download_task(
     if use_group and "--group" not in cmd:
         cmd = f"{cmd} --group"
 
-    mgr: DownloadManager = context.bot_data.setdefault("dl_manager", DownloadManager(max_concurrent=3))
+    mgr: DownloadManager = context.bot_data.setdefault("dl_manager", DownloadManager(max_concurrent=1))
     path_clean = download_dir
+    selection_snapshot = (context.chat_data.get("active_selection") or {}).copy()
+    lib_type_snapshot = context.chat_data.get("selected_type") or selection_snapshot.get("lib_type")
+    title_for_post_snapshot = selection_snapshot.get("title") or title
+    year_snapshot = selection_snapshot.get("year") or year
 
     def _apply_permissions(path: str) -> None:
         """
@@ -336,17 +347,61 @@ async def queue_download_task(
 
     status_holder: dict[str, Optional[object]] = {"msg": None}
 
+    async def _safe_send(text: str):
+        try:
+            return await message.reply_text(text)
+        except RetryAfter as e:
+            await asyncio.sleep(e.retry_after + 0.5)
+            try:
+                return await message.reply_text(text)
+            except Exception as e2:
+                logging.warning("Status send skipped after retry: %s", e2)
+        except (TimedOut, NetworkError) as e:
+            logging.warning("Status send skipped: %s", e)
+        except Exception as e:
+            logging.warning("Status send failed: %s", e)
+        return None
+
+    async def _safe_edit(msg, text: str):
+        if msg is None:
+            return False
+        try:
+            await msg.edit_text(text)
+            return True
+        except RetryAfter as e:
+            await asyncio.sleep(e.retry_after + 0.5)
+            try:
+                await msg.edit_text(text)
+                return True
+            except Exception as e2:
+                logging.warning("Status edit skipped after retry: %s", e2)
+        except (TimedOut, NetworkError) as e:
+            logging.debug("Status edit skipped: %s", e)
+        except Exception as e:
+            logging.warning("Status edit failed: %s", e)
+        return False
+
+    human_label = display_name or title or link
+
     async def _run():
-        status_msg = status_holder.get("msg")
-        if status_msg is None:
-            status_msg = await message.reply_text(f"▶️ Starting download: {title}")
+        status_msg = await _safe_send(f"▶️ Iniciando: {human_label}")
+        status_holder["msg"] = status_msg
+
+        last_progress = {"pct": -1, "ts": 0.0}
 
         async def report_progress(pct: int, line: str):
             try:
+                now = time.time()
+                if pct < last_progress["pct"]:
+                    return
+                if pct < 100 and (pct - last_progress["pct"] < PROGRESS_MIN_STEP) and (now - last_progress["ts"] < PROGRESS_MIN_INTERVAL):
+                    return
+                last_progress["pct"] = pct
+                last_progress["ts"] = now
                 bar_len = 20
                 filled = int(bar_len * pct / 100)
                 bar = "█" * filled + "░" * (bar_len - filled)
-                await status_msg.edit_text(f"⬇️ {title}\n[{bar}] {pct}%")
+                await _safe_edit(status_msg, f"⬇️ Descargando: {human_label}\n[{bar}] {pct}%")
             except Exception as e:
                 logging.debug("Could not update progress message: %s", e)
 
@@ -356,17 +411,13 @@ async def queue_download_task(
             ok = await run_download(cmd, env=env, on_progress=report_progress, register_pid=register_pid, unregister_pid=unregister_pid)
         except asyncio.CancelledError:
             try:
-                await status_msg.edit_text(f"⛔️ Cancelled: {title}")
+                await _safe_edit(status_msg, f"⛔️ Cancelled: {title}") or await _safe_send(f"⛔️ Cancelled: {title}")
             except Exception:
                 pass
             return
         if ok:
             try:
-                lib_type = context.chat_data.get("selected_type")
-                selection = context.chat_data.get("active_selection") or {}
-                title_for_post = selection.get("title") or title
-                selection_year = selection.get("year", year)
-                process_directory(path_clean, title_for_post, season_hint, lib_type, selection_year)
+                process_directory(path_clean, title_for_post_snapshot, season_hint, lib_type_snapshot, year_snapshot)
             except Exception as e:
                 logging.error("Post-process failed: %s", e)
             try:
@@ -374,17 +425,19 @@ async def queue_download_task(
             except Exception as e:
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
             try:
-                await status_msg.edit_text(f"✅ Done: {path_clean}")
+                done_text = f"✅ Listo: {human_label}\n{path_clean}"
+                if not await _safe_edit(status_msg, done_text):
+                    status_msg = await _safe_send(done_text)
             except Exception:
-                await message.reply_text(f"✅ Done: {path_clean}")
+                await _safe_send(f"✅ Listo: {human_label}\n{path_clean}")
         else:
             try:
-                await status_msg.edit_text("❌ Download failed. Check the link and try again.")
+                fail_text = f"❌ Descarga fallida: {human_label}. Revisa el enlace e intenta de nuevo."
+                if not await _safe_edit(status_msg, fail_text):
+                    await _safe_send(fail_text)
             except Exception:
-                await message.reply_text("❌ Download failed. Check the link and try again.")
+                await _safe_send(f"❌ Descarga fallida: {human_label}. Revisa el enlace e intenta de nuevo.")
     position = mgr.enqueue(message.chat_id, _run)
-    status_msg = await message.reply_text(f"⏳ {title}\nQueued #{position}")
-    status_holder["msg"] = status_msg
 
 def _guess_title_from_filename(fname: str) -> str:
     stem = os.path.splitext(fname)[0]
@@ -482,7 +535,18 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     season_hint = context.chat_data.get("season_hint")
     selection = context.chat_data.get("active_selection") or {}
     selection_year = selection.get("year")
-    await queue_download_task(message, context, link, download_dir, title, season_hint, selection_year, is_text_link)
+    display_name = None
+    if message.document and message.document.file_name:
+        display_name = message.document.file_name
+    elif message.video and message.video.file_name:
+        display_name = message.video.file_name
+    elif message.audio and message.audio.file_name:
+        display_name = message.audio.file_name
+    elif message.photo:
+        display_name = "Photo"
+    elif link:
+        display_name = link
+    await queue_download_task(message, context, link, download_dir, title, season_hint, selection_year, is_text_link, display_name)
     if should_reset_after_enqueue(context):
         reset_destination(context)
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 
 from telegram.ext import (
     Application,
@@ -37,6 +38,29 @@ from config.settings import load_settings
 from app.infra.env import load_env_file
 
 
+def _build_log_handlers():
+    """Prefer file log; fall back to /tmp if permission denied."""
+    stream = logging.StreamHandler()
+    handlers = [stream]
+    log_path = os.getenv("PLEXBOT_LOG_PATH", "bot.log")
+    try:
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.insert(0, logging.FileHandler(log_path, encoding="utf-8"))
+        return handlers
+    except Exception as e:
+        fallback_dir = os.path.join(tempfile.gettempdir(), "plexbot")
+        fallback_path = os.path.join(fallback_dir, "bot.log")
+        try:
+            os.makedirs(fallback_dir, exist_ok=True)
+            handlers.insert(0, logging.FileHandler(fallback_path, encoding="utf-8"))
+            print(f"⚠️ No se pudo abrir {log_path} ({e}); usando {fallback_path}")
+        except Exception as e2:
+            print(f"⚠️ Logs solo a consola; no se pudo abrir {log_path} ni {fallback_path}: {e2}")
+        return handlers
+
+
 def main():
     load_env_file()
     st = load_settings()
@@ -44,11 +68,10 @@ def main():
     if not token:
         raise SystemExit("Missing TELEGRAM_BOT_TOKEN environment variable")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.FileHandler("bot.log", encoding="utf-8"), logging.StreamHandler()],
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=_build_log_handlers())
+    # Drop noisy HTTP request chatter; keep warnings/errors visible.
+    for noisy in ("httpx", "httpcore", "telegram.request", "telegram.bot", "telegram.ext._application"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     app = Application.builder().token(token).build()
 
