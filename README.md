@@ -96,11 +96,5 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 ## TDL notes
 - Requires one-time `tdl login`; session stored in `TDL_HOME` (persist/mount it if containerized).  
 - TDL command template is configurable via `config/libraries.yaml` (`download.tdl_template`) and `TDL_HOME`.
-- TDL can only read messages from chats where the logged-in account has access. If you drop a file directly to the bot in DM, TDL cannot fetch it; share/forward in a chat (public or private) where your TDL account is a member and the bot sees the link.
 
-## Roadmap (short)
-- [x] Global FIFO queue + rate-limited Telegram updates.
-- [ ] Fix progress bar math for `--group` percentage.
-- [ ] Improve confirmation when adding a file without prior `/search`.
-- [ ] Better `/queue` UI and cancel interactions.
-- [ ] More robust handling of mixed archives/video drops.
+
