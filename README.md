@@ -8,10 +8,10 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 </p>
 
 <p align="center">
-  <img src="./assets/search.png" alt="Feature 1" width="220" />
-  <img src="./assets/queue.png" alt="Feature 2" width="220" />
-  <img src="./assets/realtime.png" alt="Feature 3" width="220" />
-  <img src="./assets/menu.png" alt="Feature 4" width="220" />
+  <img src="./assets/search.png" alt="Feature 1" width="450" />
+  <img src="./assets/queue.png" alt="Feature 2" width="450" />
+  <img src="./assets/realtime.png" alt="Feature 3" width="450" />
+  <img src="./assets/menu.png" alt="Feature 4" width="450" />
 </p>
 
 
