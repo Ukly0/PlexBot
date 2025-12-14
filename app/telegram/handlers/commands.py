@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from pathlib import Path
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+
+from app.services.download_manager import ContentSummary
 
 from app.telegram.state import set_state, reset_flow_state, STATE_SEARCH
 from app.telegram.handlers.download import set_season_for_selection
@@ -12,7 +15,7 @@ def _shorten(text: str, limit: int = 42) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _format_queue_view(running, queued, note: Optional[str] = None):
+def _format_queue_view(running: Optional[ContentSummary], queued: list[ContentSummary], note: Optional[str] = None):
     lines: list[str] = []
     if note:
         lines.append(note)
@@ -22,14 +25,16 @@ def _format_queue_view(running, queued, note: Optional[str] = None):
 
     if running:
         dest = Path(running.destination).name or running.destination
-        lines.append(f"▶️ {running.label} → {dest}")
+        pending_note = f" (+{running.pending} pending)" if running.pending else ""
+        lines.append(f"▶️ {running.label}{pending_note} → {dest}")
         items_for_buttons.append(running)
 
     if queued:
-        lines.append("⏳ En cola:")
+        lines.append("⏳ In queue:")
         for idx, item in enumerate(queued, start=1):
             dest = Path(item.destination).name or item.destination
-            lines.append(f"{idx}. {item.label} → {dest}")
+            count_note = f" ({item.total} pending)" if item.total > 1 else ""
+            lines.append(f"{idx}. {item.label}{count_note} → {dest}")
             items_for_buttons.append(item)
 
     if not running and not queued:
@@ -38,7 +43,7 @@ def _format_queue_view(running, queued, note: Optional[str] = None):
 
     for item in items_for_buttons:
         label = _shorten(item.label)
-        buttons.append([InlineKeyboardButton(f"❌ Cancel {label}", callback_data=f"queue_cancel|{item.id}")])
+        buttons.append([InlineKeyboardButton(f"❌ Cancel {label}", callback_data=f"queue_cancel|{item.representative_task_id}")])
 
     markup = InlineKeyboardMarkup(buttons) if buttons else None
     return "\n".join(lines), markup
@@ -98,10 +103,10 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mgr = context.bot_data.get("dl_manager")
-    if not mgr or not hasattr(mgr, "snapshot"):
+    if not mgr or not hasattr(mgr, "snapshot_by_content"):
         await update.message.reply_text("Queue is empty.")
         return
-    running, queued = await mgr.snapshot(update.effective_chat.id)
+    running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
     text, markup = _format_queue_view(running, queued)
     await update.message.reply_text(text, reply_markup=markup)
 
@@ -122,14 +127,18 @@ async def handle_queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.edit_text("Queue is empty.")
         return
     running_cancelled, queued_cancelled = await mgr.cancel_task(update.effective_chat.id, task_id)
-    note = "Cancelled download." if (running_cancelled or queued_cancelled) else "Item not found in your queue."
-    running, queued = await mgr.snapshot(update.effective_chat.id)
+    cancelled_total = running_cancelled + queued_cancelled
+    note = (
+        f"Cancelled {cancelled_total} download(s) for that title."
+        if cancelled_total
+        else "Item not found in your queue."
+    )
+    running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
     text, markup = _format_queue_view(running, queued, note=note)
     try:
         await query.message.edit_text(text, reply_markup=markup)
     except Exception:
         await query.message.reply_text(text, reply_markup=markup)
-
 
 
 async def season(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,8 +234,16 @@ async def scan_libraries(update: Update, context: ContextTypes.DEFAULT_TYPE, fro
             stats = scan_all_libraries(s, verbose=False)
             return stats
 
-    stats = await asyncio.to_thread(_run_scan)
-    await msg.edit_text(
-        f"Scan done: +{stats.shows_new} shows, +{stats.seasons_new} seasons, +{stats.episodes_new} episodes "
-        f"(files seen: {stats.files_seen})"
-    )
+    try:
+        stats = await asyncio.to_thread(_run_scan)
+        await msg.edit_text(
+            f"Scan done: +{stats.shows_new} shows, +{stats.seasons_new} seasons, +{stats.episodes_new} episodes "
+            f"(files seen: {stats.files_seen})"
+        )
+    except Exception as e:
+        logging.exception("Scan failed")
+        err_text = f"Scan failed: {e}"
+        try:
+            await msg.edit_text(err_text)
+        except Exception:
+            await msg.reply_text(err_text)

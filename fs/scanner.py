@@ -30,7 +30,6 @@ import os
 from sqlalchemy.orm import Session
 
 from store.models import Library, LibraryType
-from store.repos import LibraryRepo, ShowRepo, SeasonRepo, EpisodeRepo
 from app.services.naming import VIDEO_EXT as NAMING_VIDEO_EXT
 
 
@@ -48,7 +47,7 @@ IGNORED_FILE_PATTERNS = re.compile(r"(^|[._-])sample($|[._-])", re.I)
 
 RX_SE = re.compile(r"(?:S?(\d{1,2})[xEex](\d{1,3}))|(?:S(\d{1,2})E(\d{1,3}))", re.I)
 RX_EONLY = re.compile(r"(?<!\w)E(\d{1,3})(?!\w)", re.I)
-RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 → S01E01 (opcional)
+RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 → S01E01 (optional heuristic)
 
 
 # ----------------------------
@@ -75,7 +74,7 @@ def slugify(title: str) -> str:
 
 def season_from_dirname(name: str) -> Optional[int]:
     name = name.strip()
-    # Season 1 / Temporada 1
+    # Season 1 / "Temporada 1"
     m = re.match(r"^(?:season|temporada)\s*(\d{1,2})$", name, re.I)
     if m:
         return int(m.group(1))
@@ -204,6 +203,9 @@ def _episode_number_from_filename(file_path: Path, season_number_hint: Optional[
     if m and season_number_hint:
         return int(m.group(1))
     return None
+
+# Import repos after helper definitions to avoid circular import (repos also import these helpers).
+from store.repos import LibraryRepo, ShowRepo, SeasonRepo, EpisodeRepo  # noqa: E402
 
 
 def scan_library(

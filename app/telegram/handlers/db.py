@@ -1,6 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 
 from app.infra.db import get_session
 from store.models import Show, Season
@@ -43,13 +44,20 @@ async def db_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /dbsearch <title fragment>")
         return
     q = args[1].strip()
-    with get_session() as s:
-        rows = (
-            s.query(Show)
-            .filter(func.lower(Show.title).like(f"%{q.lower()}%"))
-            .order_by(Show.title)
-            .all()
-        )
+    try:
+        with get_session() as s:
+            rows = (
+                s.query(Show)
+                .filter(func.lower(Show.title).like(f"%{q.lower()}%"))
+                .order_by(Show.title)
+                .all()
+            )
+    except OperationalError:
+        await update.message.reply_text("DB not initialized. Run: python -m cli.manage init-db && python -m cli.manage seed-libs")
+        return
+    except Exception as e:
+        await update.message.reply_text(f"DB search failed: {e}")
+        return
     if not rows:
         await update.message.reply_text("No matches in DB.")
         return
@@ -80,10 +88,17 @@ async def db_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_session() as s:
-        totals = s.query(Show.kind, func.count()).group_by(Show.kind).all()
-        seasons = s.scalar(s.query(func.count()).select_from(Season)) or 0
-        shows_total = s.scalar(s.query(func.count()).select_from(Show)) or 0
+    try:
+        with get_session() as s:
+            totals = s.query(Show.kind, func.count()).group_by(Show.kind).all()
+            seasons = s.scalar(s.query(func.count()).select_from(Season)) or 0
+            shows_total = s.scalar(s.query(func.count()).select_from(Show)) or 0
+    except OperationalError:
+        await update.message.reply_text("DB not initialized. Run: python -m cli.manage init-db && python -m cli.manage seed-libs, then /scan.")
+        return
+    except Exception as e:
+        await update.message.reply_text(f"DB stats failed: {e}")
+        return
     lines = ["DB stats:", f"Shows: {shows_total}", f"Seasons: {seasons}"]
     for kind, count in totals:
         lines.append(f"- {kind}: {count}")

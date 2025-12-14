@@ -269,7 +269,7 @@ async def finalize_selection(
         title = context.user_data.get("manual_title") or original_title_en or label or "Content"
         season_hint = context.chat_data.get("season_hint")
         use_group = pending_is_text
-        queued_label = pending_filename or "el enlace recibido"
+        queued_label = pending_filename or "the received link"
         await update.effective_message.reply_text(f"Destination set: {download_dir}\nAdded {queued_label} to the queue.")
         await queue_download_task(
             update.effective_message,
@@ -324,6 +324,9 @@ async def queue_download_task(
     lib_type_snapshot = context.chat_data.get("selected_type") or selection_snapshot.get("lib_type")
     title_for_post_snapshot = selection_snapshot.get("title") or title
     year_snapshot = selection_snapshot.get("year") or year
+    content_id = selection_snapshot.get("base_dir") or path_clean
+    content_label = title_for_post_snapshot
+    content_destination = selection_snapshot.get("base_dir") or path_clean
 
     def _apply_permissions(path: str) -> None:
         """
@@ -392,7 +395,7 @@ async def queue_download_task(
     human_label = display_name or title or link
 
     async def _run():
-        status_msg = await _safe_send(f"▶️ Iniciando: {human_label}")
+        status_msg = await _safe_send(f"▶️ Starting: {human_label}")
         status_holder["msg"] = status_msg
 
         last_progress = {"pct": -1, "ts": 0.0}
@@ -432,7 +435,7 @@ async def queue_download_task(
                 bar_len = 20
                 filled = int(bar_len * effective_pct / 100)
                 bar = "█" * filled + "░" * (bar_len - filled)
-                await _safe_edit(status_msg, f"⬇️ Descargando: {human_label}\n[{bar}] {effective_pct}%")
+                await _safe_edit(status_msg, f"⬇️ Downloading: {human_label}\n[{bar}] {effective_pct}%")
             except Exception as e:
                 logging.debug("Could not update progress message: %s", e)
 
@@ -456,19 +459,27 @@ async def queue_download_task(
             except Exception as e:
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
             try:
-                done_text = f"✅ Listo: {human_label}\n{path_clean}"
+                done_text = f"✅ Done: {human_label}\n{path_clean}"
                 if not await _safe_edit(status_msg, done_text):
                     status_msg = await _safe_send(done_text)
             except Exception:
-                await _safe_send(f"✅ Listo: {human_label}\n{path_clean}")
+                await _safe_send(f"✅ Done: {human_label}\n{path_clean}")
         else:
             try:
-                fail_text = f"❌ Descarga fallida: {human_label}. Revisa el enlace e intenta de nuevo."
+                fail_text = f"❌ Download failed: {human_label}. Check the link and try again."
                 if not await _safe_edit(status_msg, fail_text):
                     await _safe_send(fail_text)
             except Exception:
-                await _safe_send(f"❌ Descarga fallida: {human_label}. Revisa el enlace e intenta de nuevo.")
-    queue_pos, _task_id = mgr.enqueue(message.chat_id, human_label, path_clean, _run)
+                await _safe_send(f"❌ Download failed: {human_label}. Check the link and try again.")
+    queue_pos, _task_id = mgr.enqueue(
+        message.chat_id,
+        human_label,
+        path_clean,
+        _run,
+        content_id=str(content_id),
+        content_label=content_label,
+        content_destination=str(content_destination),
+    )
     if queue_pos > 1:
         try:
             await message.reply_text(f"⏳ Added to queue (position {queue_pos}).")

@@ -6,7 +6,7 @@ PlexBot is a Telegram bot that pulls media from Telegram messages using [TDL](ht
 - Accepts Telegram links or forwarded media (documents/videos/photos/audio).
 - Searches TMDb to classify movies/series/anime/docuseries/documentaries and builds destination folders automatically once you pick a title.
 - If you paste a link or file without a destination, the bot first asks TMDb (or manual) and a category (Movies/Series/etc.), then downloads directly to the chosen library.
-- Concurrent downloads per chat (default max 3).
+- Single global FIFO worker (one download at a time to avoid conflicts).
 - Library scan helpers and simple DB search/stats commands.
 
 ## Commands (English)
@@ -45,14 +45,13 @@ PlexBot is a Telegram bot that pulls media from Telegram messages using [TDL](ht
 ## Notes
 - Temp auto-download folders are only used if you re-enable that mode; otherwise downloads go straight to the chosen library.
 - If TDL cannot export metadata for a link (no access), the bot will still try TMDb using the filename or link text before download.
-- Adjust per-chat concurrency in `DownloadManager(max_concurrent=3)` inside `bot/handlers/download.py`.
 - You can set a dedicated TDL session dir via `TDL_HOME` or `download.tdl_home` in `config/libraries.yaml` to avoid DB locks with other clients.
-- The TDL template is escaped to pass `{{ .FileName }}` so downloaded files keep their original filename (incl. extensión) before post-processing.
+- The TDL template is escaped to pass `{{ .FileName }}` so downloaded files keep their original filename (including extension) before post-processing.
 
-## Whats next? 
+## Roadmap
 
-[x] Refactor download manager to a global FIFO queue and enhance Telegram message handling with rate limiting.
-[] Fix progressbar, problem with calculate --group percentage.
-[] Change confirmationn menssage when we direct add a file without a first /search. Is confussing: "Send a Telegram link or attach a file to download"
-[] Add a list of button with a comand /queue with a list of the current queue series/tv/movies in the queue, when you press it you cancel that item from the queue.
-[] Support tratement multi fomat file (mp4, mkv, ts, etc). A group of files can contain .zip and .rar between video files. Extract and process the content to ensure it is a valid video file. 
+- [x] Refactor download manager to a global FIFO queue and enhance Telegram message handling with rate limiting.
+- [ ] Fix progress bar math for `--group` percentage.
+- [ ] Improve confirmation message when adding a file without a prior /search (“Send a Telegram link or attach a file to download” is confusing).
+- [ ] Add buttons to `/queue` to list current titles and cancel a specific one.
+- [ ] Handle mixed archive/video drops (mp4, mkv, ts + zip/rar parts) and extract/validate video content automatically.
