@@ -1,9 +1,47 @@
 import asyncio
+from pathlib import Path
+from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from app.telegram.state import set_state, reset_flow_state, STATE_SEARCH
 from app.telegram.handlers.download import set_season_for_selection
+
+
+def _shorten(text: str, limit: int = 42) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _format_queue_view(running, queued, note: Optional[str] = None):
+    lines: list[str] = []
+    if note:
+        lines.append(note)
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    items_for_buttons = []
+
+    if running:
+        dest = Path(running.destination).name or running.destination
+        lines.append(f"▶️ {running.label} → {dest}")
+        items_for_buttons.append(running)
+
+    if queued:
+        lines.append("⏳ En cola:")
+        for idx, item in enumerate(queued, start=1):
+            dest = Path(item.destination).name or item.destination
+            lines.append(f"{idx}. {item.label} → {dest}")
+            items_for_buttons.append(item)
+
+    if not running and not queued:
+        lines.append(note or "Queue is empty.")
+        return "\n".join(lines), None
+
+    for item in items_for_buttons:
+        label = _shorten(item.label)
+        buttons.append([InlineKeyboardButton(f"❌ Cancel {label}", callback_data=f"queue_cancel|{item.id}")])
+
+    markup = InlineKeyboardMarkup(buttons) if buttons else None
+    return "\n".join(lines), markup
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -12,6 +50,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "- /menu to open quick actions\n"
         "- /search to search movie/series (TMDb) and set destination\n"
+        "- /queue to see your pending/running downloads and cancel\n"
         "- /dbsearch <text> to search in DB, /dbstats for metrics\n"
         "- /clean_tmp to remove temporary auto-download folders\n"
         "- /season <n> to change the active series/docuseries season\n"
@@ -55,6 +94,42 @@ async def cancel_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cancelled_running or cancelled_queue:
         msg += f" Stopped {cancelled_running} running and cleared {cancelled_queue} queued."
     await update.message.reply_text(f"{msg} Use /search to start over.")
+
+
+async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mgr = context.bot_data.get("dl_manager")
+    if not mgr or not hasattr(mgr, "snapshot"):
+        await update.message.reply_text("Queue is empty.")
+        return
+    running, queued = await mgr.snapshot(update.effective_chat.id)
+    text, markup = _format_queue_view(running, queued)
+    await update.message.reply_text(text, reply_markup=markup)
+
+
+async def handle_queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    parts = (query.data or "").split("|")
+    if len(parts) != 2:
+        return
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        await query.answer("Invalid item.", show_alert=True)
+        return
+    mgr = context.bot_data.get("dl_manager")
+    if not mgr or not hasattr(mgr, "cancel_task"):
+        await query.message.edit_text("Queue is empty.")
+        return
+    running_cancelled, queued_cancelled = await mgr.cancel_task(update.effective_chat.id, task_id)
+    note = "Cancelled download." if (running_cancelled or queued_cancelled) else "Item not found in your queue."
+    running, queued = await mgr.snapshot(update.effective_chat.id)
+    text, markup = _format_queue_view(running, queued, note=note)
+    try:
+        await query.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await query.message.reply_text(text, reply_markup=markup)
+
 
 
 async def season(update: Update, context: ContextTypes.DEFAULT_TYPE):

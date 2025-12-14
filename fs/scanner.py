@@ -31,13 +31,14 @@ from sqlalchemy.orm import Session
 
 from store.models import Library, LibraryType
 from store.repos import LibraryRepo, ShowRepo, SeasonRepo, EpisodeRepo
+from app.services.naming import VIDEO_EXT as NAMING_VIDEO_EXT
 
 
 # ----------------------------
 # Naming/parse config
 # ----------------------------
 
-VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
+VIDEO_EXT = NAMING_VIDEO_EXT
 SUB_EXT = {".srt", ".ass"}  # remove from VALID_EXT if you don’t want subtitles indexed
 VALID_EXT = VIDEO_EXT 
 

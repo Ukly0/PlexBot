@@ -21,6 +21,8 @@ from app.telegram.handlers.commands import (
     scan_libraries,
     clean_tmp,
     season,
+    queue_status,
+    handle_queue_cancel,
 )
 from app.telegram.handlers.download import handle_download_message
 from app.telegram.handlers.search import (
@@ -83,6 +85,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler(["season", "temporada"], season))
     app.add_handler(CommandHandler("scan", scan_libraries))
+    app.add_handler(CommandHandler("queue", queue_status))
     app.add_handler(CommandHandler("dbsearch", db_search))
     app.add_handler(CommandHandler("dbstats", db_stats))
     app.add_handler(CommandHandler("clean_tmp", clean_tmp))
@@ -97,6 +100,7 @@ def main():
     app.add_handler(CallbackQueryHandler(db_page, pattern=r"^dbpage\|"))
     app.add_handler(CallbackQueryHandler(handle_manual_entry, pattern=r"^manual\|start"))
     app.add_handler(CallbackQueryHandler(handle_manual_type, pattern=r"^manual_type\|"))
+    app.add_handler(CallbackQueryHandler(handle_queue_cancel, pattern=r"^queue_cancel\|"))
     # Text messages → state/search router
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
     # Non-text messages (document/video/audio/photo) → direct download

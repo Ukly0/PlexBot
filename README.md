@@ -48,3 +48,11 @@ PlexBot is a Telegram bot that pulls media from Telegram messages using [TDL](ht
 - Adjust per-chat concurrency in `DownloadManager(max_concurrent=3)` inside `bot/handlers/download.py`.
 - You can set a dedicated TDL session dir via `TDL_HOME` or `download.tdl_home` in `config/libraries.yaml` to avoid DB locks with other clients.
 - The TDL template is escaped to pass `{{ .FileName }}` so downloaded files keep their original filename (incl. extensión) before post-processing.
+
+## Whats next? 
+
+[x] Refactor download manager to a global FIFO queue and enhance Telegram message handling with rate limiting.
+[] Fix progressbar, problem with calculate --group percentage.
+[] Change confirmationn menssage when we direct add a file without a first /search. Is confussing: "Send a Telegram link or attach a file to download"
+[] Add a list of button with a comand /queue with a list of the current queue series/tv/movies in the queue, when you press it you cancel that item from the queue.
+[] Support tratement multi fomat file (mp4, mkv, ts, etc). A group of files can contain .zip and .rar between video files. Extract and process the content to ensure it is a valid video file. 

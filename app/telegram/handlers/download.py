@@ -29,6 +29,7 @@ FILE_MODE = 0o644
 # Rate-limit progress edits to avoid Telegram 429/timeout storms.
 PROGRESS_MIN_STEP = 2
 PROGRESS_MIN_INTERVAL = 5.0
+GROUP_PROGRESS_RE = re.compile(r"(?:^|[\s\[])(\d{1,3})/(\d{1,3})(?:[\]\s]|$)")
 
 # Global lock to serialize TDL invocations. Re-bound per event loop to avoid
 # "Event loop is closed" when the app restarts.
@@ -260,14 +261,16 @@ async def finalize_selection(
     context.user_data["manual_title"] = base_title
     context.user_data.pop("awaiting", None)
 
-    msg = f"Destination set: {download_dir}\nSend a Telegram link or attach a file to download."
-    await update.effective_message.reply_text(msg)
-
     pending_link = context.chat_data.pop("pending_link", None)
+    pending_is_text = bool(context.chat_data.pop("pending_link_is_text", False))
+    pending_filename = context.chat_data.pop("pending_filename", None)
+
     if pending_link:
         title = context.user_data.get("manual_title") or original_title_en or label or "Content"
         season_hint = context.chat_data.get("season_hint")
-        use_group = bool(context.chat_data.pop("pending_link_is_text", False))
+        use_group = pending_is_text
+        queued_label = pending_filename or "el enlace recibido"
+        await update.effective_message.reply_text(f"Destination set: {download_dir}\nAdded {queued_label} to the queue.")
         await queue_download_task(
             update.effective_message,
             context,
@@ -277,10 +280,14 @@ async def finalize_selection(
             season_hint,
             year,
             use_group,
-            pending_link,
+            pending_filename or pending_link,
         )
         if should_reset_after_enqueue(context):
             reset_destination(context)
+        return
+
+    msg = f"Destination set: {download_dir}\nReady. Send a Telegram link or attach a file to download."
+    await update.effective_message.reply_text(msg)
 
 
 async def queue_download_task(
@@ -309,6 +316,7 @@ async def queue_download_task(
         cmd = f"{cmd} {extra_flags}"
     if use_group and "--group" not in cmd:
         cmd = f"{cmd} --group"
+    group_mode = use_group or "--group" in cmd
 
     mgr: DownloadManager = context.bot_data.setdefault("dl_manager", DownloadManager(max_concurrent=1))
     path_clean = download_dir
@@ -388,20 +396,43 @@ async def queue_download_task(
         status_holder["msg"] = status_msg
 
         last_progress = {"pct": -1, "ts": 0.0}
+        group_state = {"total": None, "index": None}
 
         async def report_progress(pct: int, line: str):
             try:
                 now = time.time()
-                if pct < last_progress["pct"]:
+                effective_pct = pct
+
+                if group_mode:
+                    match = GROUP_PROGRESS_RE.search(line)
+                    if match:
+                        idx = int(match.group(1))
+                        total = int(match.group(2))
+                        if total > 0:
+                            group_state["index"] = idx
+                            group_state["total"] = max(group_state["total"] or 0, total)
+                    if group_state["total"]:
+                        idx = group_state["index"] or 1
+                        total = group_state["total"] or 1
+                        completed = max(0, min(idx, total) - 1)
+                        effective_pct = int(((completed + (pct / 100.0)) / total) * 100)
+                        effective_pct = max(0, min(effective_pct, 100))
+
+                if effective_pct < last_progress["pct"]:
+                    if group_mode and pct <= 5 and last_progress["pct"] >= 95:
+                        # Allow reset when a new file starts within a grouped download.
+                        pass
+                    else:
+                        return
+                if effective_pct < 100 and (effective_pct - last_progress["pct"] < PROGRESS_MIN_STEP) and (now - last_progress["ts"] < PROGRESS_MIN_INTERVAL):
                     return
-                if pct < 100 and (pct - last_progress["pct"] < PROGRESS_MIN_STEP) and (now - last_progress["ts"] < PROGRESS_MIN_INTERVAL):
-                    return
-                last_progress["pct"] = pct
+
+                last_progress["pct"] = effective_pct
                 last_progress["ts"] = now
                 bar_len = 20
-                filled = int(bar_len * pct / 100)
+                filled = int(bar_len * effective_pct / 100)
                 bar = "█" * filled + "░" * (bar_len - filled)
-                await _safe_edit(status_msg, f"⬇️ Descargando: {human_label}\n[{bar}] {pct}%")
+                await _safe_edit(status_msg, f"⬇️ Descargando: {human_label}\n[{bar}] {effective_pct}%")
             except Exception as e:
                 logging.debug("Could not update progress message: %s", e)
 
@@ -437,7 +468,12 @@ async def queue_download_task(
                     await _safe_send(fail_text)
             except Exception:
                 await _safe_send(f"❌ Descarga fallida: {human_label}. Revisa el enlace e intenta de nuevo.")
-    position = mgr.enqueue(message.chat_id, _run)
+    queue_pos, _task_id = mgr.enqueue(message.chat_id, human_label, path_clean, _run)
+    if queue_pos > 1:
+        try:
+            await message.reply_text(f"⏳ Added to queue (position {queue_pos}).")
+        except Exception:
+            pass
 
 def _guess_title_from_filename(fname: str) -> str:
     stem = os.path.splitext(fname)[0]

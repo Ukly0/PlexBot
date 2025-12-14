@@ -1,24 +1,54 @@
 import logging
-import os
-import shutil
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
+
 import zipfile
 
 from app.services.naming import bulk_rename, rename_movie_files
-
 SERIES_TYPES = {"series", "anime", "docuseries"}
 MOVIE_TYPES = {"movies", "documentary"}
 
-VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
-ARCHIVE_EXT = {".rar", ".zip", ".r00", ".001"}
+ARCHIVE_CANDIDATES = {".zip", ".rar", ".r00", ".r01", ".r02", ".001"}
 
 
-def _find_archives(root: Path):
+def _iter_archives(root: Path):
     for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in ARCHIVE_EXT:
+        if not p.is_file():
+            continue
+        suffixes = [s.lower() for s in p.suffixes]
+        if not suffixes:
+            continue
+        if any(s in ARCHIVE_CANDIDATES for s in suffixes) or any(s.startswith(".r") and s[1:].isdigit() for s in suffixes):
             yield p
+
+
+def _detect_archive_type(path: Path) -> Optional[str]:
+    """Return 'zip' or 'rar' if the file looks like an archive."""
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(8)
+        if magic.startswith(b"PK"):
+            return "zip"
+        if magic.startswith(b"Rar!"):
+            return "rar"
+    except Exception as e:
+        logging.debug("Could not read archive header for %s: %s", path, e)
+
+    suffixes = [s.lower() for s in path.suffixes]
+    if any(s == ".zip" for s in suffixes):
+        return "zip"
+    if any(s in {".rar", ".r00", ".r01", ".r02"} or (s.startswith(".r") and s[1:].isdigit()) for s in suffixes):
+        return "rar"
+    return None
+
+
+def _archive_key(path: Path) -> str:
+    """Normalize archive name to avoid extracting all volumes of the same set."""
+    stem = path.stem.lower()
+    stem = re.sub(r"\.part\d+$", "", stem)
+    return stem
 
 
 def _extract_zip(path: Path, dest: Path):
@@ -33,16 +63,24 @@ def _extract_rar(path: Path, dest: Path):
 
 
 def extract_archives(root: Path) -> None:
-    for arc in _find_archives(root):
+    processed: set[str] = set()
+    for arc in _iter_archives(root):
+        archive_type = _detect_archive_type(arc)
+        if not archive_type:
+            continue
+        key = _archive_key(arc)
+        if key in processed:
+            continue
+        processed.add(key)
         try:
             dest = arc.parent
-            if arc.suffix.lower() == ".zip":
+            if archive_type == "zip":
                 _extract_zip(arc, dest)
             else:
                 _extract_rar(arc, dest)
             arc.unlink(missing_ok=True)
         except Exception as e:
-            logging.error("Error extracting %s: %s", arc, e)
+            logging.error("Error extracting %s (%s): %s", arc, archive_type, e)
 
 
 def process_directory(

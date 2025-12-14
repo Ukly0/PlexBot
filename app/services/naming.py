@@ -8,7 +8,22 @@ RX_SE_ALT = re.compile(r"S(\d{1,2})E(\d{1,3})", re.I)
 RX_E_ONLY = re.compile(r"E(\d{1,3})", re.I)
 RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 -> S01E01
 
-VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov"}
+# Accepted video extensions (keep in sync with ingest/scanner)
+VIDEO_EXT = {
+    ".mkv",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".ts",
+    ".m4v",
+    ".webm",
+    ".flv",
+    ".wmv",
+    ".mpg",
+    ".mpeg",
+    ".m2ts",
+    ".mts",
+}
 INVALID_FS_CHARS = set('<>:"/\\|?*')
 
 
