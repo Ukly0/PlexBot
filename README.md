@@ -2,6 +2,19 @@
 
 Telegram bot that pulls media from Telegram messages using [TDL](https://github.com/iyear/tdl-telegram), matches titles with TMDb, and stores everything in a Plex-friendly library layout.
 
+<p align="center">
+  <strong>⚠️ Notice — Under development</strong><br>
+  <em>This bot is currently under active development. It may contain bugs, unexpected behavior, or breaking changes. Use at your own risk and please report issues in the Issues section.</em>
+</p>
+
+<p align="center">
+  <img src="./assets/search.png" alt="Feature 1" width="220" />
+  <img src="./assets/queue.png" alt="Feature 2" width="220" />
+  <img src="./assets/realtime.png" alt="Feature 3" width="220" />
+  <img src="./assets/menu.png" alt="Feature 4" width="220" />
+</p>
+
+
 ## Features
 - Accepts Telegram links or forwarded media (documents/videos/photos/audio).
 - TMDb lookup + manual entry to classify Movies/Series/Anime/Docuseries/Documentary.
@@ -96,17 +109,5 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 ## TDL notes
 - Requires one-time `tdl login`; session stored in `TDL_HOME` (persist/mount it if containerized).  
 - TDL command template is configurable via `config/libraries.yaml` (`download.tdl_template`) and `TDL_HOME`.
-
-# ⚠️ Notice — Under development
-
-> This bot is currently under active development. It may contain bugs, unexpected behavior, or breaking changes. Use at your own risk and please report issues in the Issues section.
-
-<!-- Feature images: replace the paths with the actual files in your repo -->
-<p align="center">
-  <img src="assets/feature1.png" alt="Feature 1" width="220" />
-  <img src="assets/feature2.png" alt="Feature 2" width="220" />
-  <img src="assets/feature3.png" alt="Feature 3" width="220" />
-  <img src="assets/feature4.png" alt="Feature 4" width="220" />
-</p>
 
 
