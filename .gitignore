@@ -10,3 +10,4 @@ bot.log
 !.env.example
 __init__.py
 .venv
+*.dbhat
