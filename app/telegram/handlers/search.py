@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 from app.telegram.state import STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
 from app.services.tmdb_client import TMDbItem, TMDbSeason, tmdb_search, tmdb_seasons, tmdb_last_error
 from .download import finalize_selection, handle_download_message
+from config.settings import load_settings, DEFAULT_CATEGORY_LABELS
 
 PAGE_SIZE = 5
 SEASON_TYPES = {"series", "anime", "docuseries"}
@@ -55,13 +56,25 @@ def build_season_keyboard(seasons: List[TMDbSeason]) -> InlineKeyboardMarkup:
 
 
 def build_category_keyboard() -> InlineKeyboardMarkup:
-    opts = [
-        ("📺 Series", "series"),
-        ("✨ Anime", "anime"),
-        ("🎞️ Docuseries", "docuseries"),
-        ("🎥 Documentary", "documentary"),
-        ("🎬 Movie", "movies"),
-    ]
+    st = load_settings()
+    labels = getattr(st, "ui", None)
+    category_labels = getattr(labels, "category_labels", None) or DEFAULT_CATEGORY_LABELS
+    seen = set()
+    available = []
+    for lib in st.libraries:
+        lib_type = getattr(lib, "type", None)
+        if not lib_type or lib_type in seen:
+            continue
+        seen.add(lib_type)
+        available.append(lib_type)
+    if not available:
+        available = list(DEFAULT_CATEGORY_LABELS.keys())
+    order = ["series", "anime", "docuseries", "documentary", "movies"]
+    ordered_types = [t for t in order if t in available] + [t for t in available if t not in order]
+    opts = []
+    for t in ordered_types:
+        label = category_labels.get(t) or DEFAULT_CATEGORY_LABELS.get(t) or t
+        opts.append((label, t))
     buttons: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for label, val in opts:

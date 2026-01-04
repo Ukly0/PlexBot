@@ -26,3 +26,13 @@ libraries:
 download:
   # Optional: dedicated TDL session directory to avoid DB locks with other clients.
   # tdl_home: /home/ukiyo/.tdl-plexbot
+  # tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
+
+# Optional UI overrides for category buttons.
+ui:
+  categories:
+    series: "📺 Series"
+    anime: "✨ Anime"
+    docuseries: "🎞️ Docuseries"
+    documentary: "🎥 Documentales"
+    movies: "🎬 Peliculas"

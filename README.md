@@ -54,9 +54,10 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 - `config/libraries.yaml`: define libraries and optional download overrides (template/home).
 - Environment variables:
   - `TELEGRAM_BOT_TOKEN`: Telegram bot token.
-  - `TMDB_API_KEY`: TMDb API key.
-  - `PLEX_DB_URL`: DB URL (SQLite by default).
-  - `TDL_HOME`: where TDL stores its session (persist this).
+- `TMDB_API_KEY`: TMDb API key.
+- `PLEX_DB_URL`: DB URL (SQLite by default).
+- `TDL_HOME`: where TDL stores its session (persist this).
+- Category buttons: customize labels in `config/libraries.yaml` under `ui.categories`.
 - The bot auto-creates tables and seeds libraries from `config/libraries.yaml` if empty.
 
 ## Commands
@@ -71,6 +72,12 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 - `/dbstats` — DB metrics.
 - `/scan` — rescan libraries and sync DB.
 - `/clean_tmp` — remove temp auto-download folders.
+
+## Docker
+- `Dockerfile` + `docker-compose.yml` provided. Configure env in `.env` and library roots via volume mappings to match `config/libraries.yaml`.
+- Mount `config/` as read-only, `./data` for DB + TDL session (`TDL_HOME`), and your media roots for each library type.
+- Example: update `MEDIA_ROOT_*` vars in `.env` to point to host folders, then run `docker compose up -d`.
+- Place a `tdl` binary on PATH inside the container (e.g., bind-mount to `/usr/local/bin/tdl` or drop it into `./bin` before building).
 
 ## Workflows and behaviors
 ### Download flow
@@ -109,5 +116,3 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 ## TDL notes
 - Requires one-time `tdl login`; session stored in `TDL_HOME` (persist/mount it if containerized).  
 - TDL command template is configurable via `config/libraries.yaml` (`download.tdl_template`) and `TDL_HOME`.
-
-

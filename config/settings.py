@@ -2,9 +2,16 @@
 import os
 import yaml
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-LibraryType = Literal["movie", "series", "anime", "documentary", "docuseries"]
+LibraryType = Literal["movies", "movie", "series", "anime", "documentary", "docuseries"]
+DEFAULT_CATEGORY_LABELS: Dict[str, str] = {
+    "series": "📺 Series",
+    "anime": "✨ Anime",
+    "docuseries": "🎞️ Docuseries",
+    "documentary": "🎥 Documentary",
+    "movies": "🎬 Movie",
+}
 
 @dataclass
 class LibraryCfg:
@@ -20,19 +27,31 @@ class DownloadCfg:
     extract_rar: bool = True
 
 @dataclass
+class UICfg:
+    category_labels: Dict[str, str]
+
+@dataclass
 class Settings:
     db_url: str
     libraries: List[LibraryCfg]
     download: DownloadCfg
     admin_chat_id: Optional[str]
     telegram_token: Optional[str]
+    ui: UICfg
+
+
+def _normalize_type(t: str) -> str:
+    t_norm = str(t).strip().lower()
+    if t_norm == "movie":
+        return "movies"
+    return t_norm
 
 def load_settings(yaml_path: str = "config/libraries.yaml") -> Settings:
     with open(yaml_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     libs = [
-        LibraryCfg(name=str(i["name"]), type=str(i["type"]), root=str(i["root"]))
+        LibraryCfg(name=str(i["name"]), type=_normalize_type(i["type"]), root=str(i["root"]))
         for i in data.get("libraries", [])
     ]
 
@@ -50,10 +69,20 @@ def load_settings(yaml_path: str = "config/libraries.yaml") -> Settings:
     admin_chat_id = os.getenv(admin_chat_id_env)
     telegram_token = os.getenv(telegram_token_env)
 
+    ui_raw = data.get("ui", {}) or {}
+    cat_labels_raw = ui_raw.get("categories", {}) or {}
+    cat_labels = DEFAULT_CATEGORY_LABELS.copy()
+    for key, label in cat_labels_raw.items():
+        k = _normalize_type(key)
+        if k in cat_labels and label:
+            cat_labels[k] = str(label)
+    ui = UICfg(category_labels=cat_labels)
+
     return Settings(
         db_url=db_url,
         libraries=libs,
         download=download,
         admin_chat_id=admin_chat_id,
         telegram_token=telegram_token,
+        ui=ui,
     )

@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  plexbot:
+    build: .
+    env_file: .env
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TMDB_API_KEY: ${TMDB_API_KEY}
+      ADMIN_CHAT_ID: ${ADMIN_CHAT_ID}
+      PLEX_DB_URL: ${PLEX_DB_URL:-sqlite:////data/plexbot.db}
+      TDL_HOME: ${TDL_HOME:-/data/tdl}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/data
+      - ${MEDIA_ROOT_SERIES:-/path/to/series}:/media/storage/data/media/tv
+      - ${MEDIA_ROOT_ANIME:-/path/to/anime}:/media/storage/data/media/anime
+      - ${MEDIA_ROOT_DOCUSERIES:-/path/to/docuseries}:/media/storage/data/media/documentaries_tv
+      - ${MEDIA_ROOT_DOCUMENTARY:-/path/to/documentaries}:/media/storage/data/media/documentaries_mov
+      - ${MEDIA_ROOT_MOVIES:-/path/to/movies}:/media/storage/data/media/movies
+      - ${MEDIA_ROOT_MOVIES3D:-/path/to/movies3d}:/media/storage/data/media/movies_3d
+    command: ["python", "-m", "app.telegram.main"]
+    restart: unless-stopped
