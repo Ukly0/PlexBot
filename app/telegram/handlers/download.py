@@ -30,6 +30,7 @@ FILE_MODE = 0o644
 PROGRESS_MIN_STEP = 2
 PROGRESS_MIN_INTERVAL = 5.0
 GROUP_PROGRESS_RE = re.compile(r"(?:^|[\s\[])(\d{1,3})/(\d{1,3})(?:[\]\s]|$)")
+PCT_RE = re.compile(r"(\d{1,3})(?:\.\d+)?%")
 
 # Global lock to serialize TDL invocations. Re-bound per event loop to avoid
 # "Event loop is closed" when the app restarts.
@@ -101,6 +102,7 @@ async def run_download(
     env: Optional[dict[str, str]] = None,
     retries: int = 3,
     delay: int = 5,
+    idle_timeout: int = 300,
     on_progress: Optional[ProgressCb] = None,
     register_pid: Optional[Callable[[int], None]] = None,
     unregister_pid: Optional[Callable[[int], None]] = None,
@@ -115,6 +117,7 @@ async def run_download(
     max_tail = 50
     last_percent = -1
     last_emit = 0.0
+    last_output_ts = 0.0
     try:
         lock = get_tdl_lock()
         async with lock:
@@ -133,10 +136,21 @@ async def run_download(
                         register_pid(proc.pid)
                     except Exception:
                         pass
+                last_output_ts = time.time()
                 while True:
-                    line = await proc.stdout.readline()
+                    try:
+                        line = await asyncio.wait_for(proc.stdout.readline(), timeout=idle_timeout)
+                    except asyncio.TimeoutError:
+                        logging.error("Download idle for %ss, terminating: %s", idle_timeout, cmd)
+                        proc.kill()
+                        try:
+                            await proc.wait()
+                        except Exception:
+                            pass
+                        break
                     if not line:
                         break
+                    last_output_ts = time.time()
                     last_line = line.decode().strip()
                     if last_line:
                         lines.append(last_line)
@@ -356,6 +370,18 @@ async def queue_download_task(
                 except Exception as e:
                     logging.debug("Perms skipped for %s: %s", p, e)
 
+    def _snapshot_files(path: str) -> set[str]:
+        """
+        Capture a set of file paths (relative to path) to detect new downloads.
+        """
+        snap: set[str] = set()
+        for root, _, files in os.walk(path):
+            for fname in files:
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, path)
+                snap.add(rel)
+        return snap
+
     status_holder: dict[str, Optional[object]] = {"msg": None}
 
     async def _safe_send(text: str):
@@ -398,13 +424,21 @@ async def queue_download_task(
         status_msg = await _safe_send(f"▶️ Starting: {human_label}")
         status_holder["msg"] = status_msg
 
-        last_progress = {"pct": -1, "ts": 0.0}
+        before_files = _snapshot_files(path_clean)
+        last_progress = {"pct": -1, "ts": 0.0, "idx": None}
         group_state = {"total": None, "index": None}
 
         async def report_progress(pct: int, line: str):
             try:
                 now = time.time()
                 effective_pct = pct
+
+                # If TDL emits multiple percents (e.g. per file + total), pick the last one on the line.
+                percents = PCT_RE.findall(line)
+                if percents:
+                    pct_line = int(float(percents[-1]))
+                    pct_line = max(0, min(100, pct_line))
+                    pct = pct_line
 
                 if group_mode:
                     match = GROUP_PROGRESS_RE.search(line)
@@ -421,9 +455,10 @@ async def queue_download_task(
                         effective_pct = int(((completed + (pct / 100.0)) / total) * 100)
                         effective_pct = max(0, min(effective_pct, 100))
 
+                # Allow resets when a new group index is detected (new file) even if percentage drops.
                 if effective_pct < last_progress["pct"]:
-                    if group_mode and pct <= 5 and last_progress["pct"] >= 95:
-                        # Allow reset when a new file starts within a grouped download.
+                    idx_changed = group_state.get("index") and group_state.get("index") != last_progress.get("idx")
+                    if group_mode and (idx_changed or (pct <= 5 and last_progress["pct"] >= 95)):
                         pass
                     else:
                         return
@@ -432,6 +467,7 @@ async def queue_download_task(
 
                 last_progress["pct"] = effective_pct
                 last_progress["ts"] = now
+                last_progress["idx"] = group_state.get("index")
                 bar_len = 20
                 filled = int(bar_len * effective_pct / 100)
                 bar = "█" * filled + "░" * (bar_len - filled)
@@ -449,15 +485,50 @@ async def queue_download_task(
             except Exception:
                 pass
             return
-        if ok:
-            try:
-                process_directory(path_clean, title_for_post_snapshot, season_hint, lib_type_snapshot, year_snapshot)
-            except Exception as e:
-                logging.error("Post-process failed: %s", e)
+        # Always check what landed on disk to decide next steps.
+        after_files = _snapshot_files(path_clean)
+        new_files = after_files - before_files
+        has_new = bool(new_files)
+
+        processed = False
+        if not ok:
+            # On failed downloads, remove any new files to avoid leaving corrupt parts behind.
+            for rel in sorted(new_files):
+                try:
+                    target = os.path.join(path_clean, rel)
+                    os.remove(target)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logging.warning("Could not delete partial file %s: %s", target, e)
+            logging.error("Download failed; skipped post-processing for %s", path_clean)
+        else:
+            pending_same_dest = await mgr.pending_for_content(message.chat_id, content_id)
+            if pending_same_dest > 0:
+                logging.info(
+                    "Skipping post-process for %s (pending tasks for same destination: %s)",
+                    path_clean,
+                    pending_same_dest,
+                )
+            else:
+                try:
+                    logging.info(
+                        "Post-processing download (ok=%s, new=%s files) at %s",
+                        ok,
+                        len(new_files),
+                        path_clean,
+                    )
+                    process_directory(path_clean, title_for_post_snapshot, season_hint, lib_type_snapshot, year_snapshot)
+                    processed = True
+                except Exception as e:
+                    logging.error("Post-process failed: %s", e)
+
             try:
                 _apply_permissions(path_clean)
             except Exception as e:
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
+
+        if ok:
             try:
                 done_text = f"✅ Done: {human_label}\n{path_clean}"
                 if not await _safe_edit(status_msg, done_text):

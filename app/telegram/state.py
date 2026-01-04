@@ -23,5 +23,14 @@ def reset_flow_state(context) -> None:
         "results_page",
     ]:
         context.user_data.pop(key, None)
-    for key in ["tdl_extra_flags", "download_dir", "season_hint", "active_selection", "selected_type"]:
+    for key in [
+        "tdl_extra_flags",
+        "download_dir",
+        "season_hint",
+        "active_selection",
+        "selected_type",
+        "pending_link",
+        "pending_link_is_text",
+        "pending_filename",
+    ]:
         context.chat_data.pop(key, None)

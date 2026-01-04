@@ -110,22 +110,39 @@ class DownloadManager:
     async def cancel_running(self, chat_id: int) -> int:
         cancelled_running = 0
         restart_needed = False
+        worker: asyncio.Task | None = None
+
         # Cancel worker if current is from chat_id
         if self._current and self._current.chat_id == chat_id and self._worker:
-            self._worker.cancel()
+            worker = self._worker
+            worker.cancel()
             cancelled_running = 1
-            await asyncio.gather(self._worker, return_exceptions=True)
-            self._worker = None
-            self._current = None
-            restart_needed = True
-        # Hard-kill child PIDs of this chat
+
+        # Hard-kill child PIDs of this chat immediately
         for pid in list(self.child_pids.get(chat_id, [])):
             try:
                 os.kill(pid, 9)
             except Exception:
                 pass
         self.child_pids[chat_id] = []
-        if restart_needed and self.queue:
+
+        # Wait briefly for the worker to stop, but don't block forever
+        if worker:
+            try:
+                await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), timeout=5)
+            except asyncio.TimeoutError:
+                logging.warning("Timed out while cancelling running download for chat %s", chat_id)
+            except Exception as e:
+                logging.warning("Error while cancelling running download for chat %s: %s", chat_id, e)
+            finally:
+                if self._worker and self._worker.done():
+                    self._worker = None
+                self._current = None
+
+        if cancelled_running and self.queue and (self._worker is None or self._worker.done()):
+            restart_needed = True
+
+        if restart_needed:
             asyncio.create_task(self._ensure_worker())
         return cancelled_running
 
@@ -238,3 +255,11 @@ class DownloadManager:
                 queued_summaries.append(summary)
 
         return running_summary, queued_summaries
+
+    async def pending_for_content(self, chat_id: int, content_id: str) -> int:
+        """
+        Count queued tasks for a given content_id (excluding the currently running one).
+        Useful to decide if a post-process should wait.
+        """
+        _, queued_tasks = await self.snapshot(chat_id)
+        return sum(1 for item in queued_tasks if item.content_id == content_id)
