@@ -1,6 +1,6 @@
 # PlexBot
 
-Telegram bot that pulls media from Telegram messages using [TDL](https://github.com/iyear/tdl-telegram), matches titles with TMDb, and stores everything in a Plex-friendly library layout.
+Telegram bot that pulls media from Telegram messages using [TDL](https://github.com/iyear/tdl), matches titles with TMDb, and stores everything in a Plex-friendly library layout.
 
 <p align="center">
   <strong>⚠️ Notice — Under development</strong><br>
