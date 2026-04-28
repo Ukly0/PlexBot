@@ -11,7 +11,6 @@ from telegram.ext import (
 )
 
 from app.telegram.handlers.commands import (
-    buscar,
     search,
     cancel,
     cancel_all,
@@ -80,11 +79,11 @@ def main():
 
     # Commands
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler(["buscar", "search"], search))
+    app.add_handler(CommandHandler("search", search))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("cancel_all", cancel_all))
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler(["season", "temporada"], season))
+    app.add_handler(CommandHandler("season", season))
     app.add_handler(CommandHandler("scan", scan_libraries))
     app.add_handler(CommandHandler("queue", queue_status))
     app.add_handler(CommandHandler("dbsearch", db_search))

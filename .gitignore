@@ -11,3 +11,4 @@ bot.log
 __init__.py
 .venv
 *.dbhat
+AGENTS.md

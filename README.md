@@ -62,15 +62,12 @@ Telegram bot that pulls media from Telegram messages using [TDL](https://github.
 
 ## Commands
 - `/start` — help.
-- `/menu` — quick actions (search, DB search/stats, scan).
-- `/search` (alias `/buscar`) — TMDb search + destination setup.
-- `/season <n>` (alias `/temporada`) — switch active season for a selected series/docuseries.
+- `/menu` — button dashboard for add content, inbox, queue, and recently added.
+- `/search` — TMDb search + destination setup.
+- `/season <n>` — switch active season for a selected series/docuseries.
 - `/queue` — show running/pending downloads; cancel by title.
 - `/cancel` — cancel current flow + running download for this chat.
 - `/cancel_all` — cancel flow + running and queued downloads for this chat.
-- `/dbsearch <text>` — search stored shows.
-- `/dbstats` — DB metrics.
-- `/scan` — rescan libraries and sync DB.
 - `/clean_tmp` — remove temp auto-download folders.
 
 ## Docker

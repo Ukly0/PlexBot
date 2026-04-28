@@ -17,43 +17,65 @@ Expected tables (store/models.py):
 from __future__ import annotations
 import enum
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple, List, Iterable, TypeVar
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from .models import Library, LibraryType, Show, Season, Episode  # ChatState is imported on-demand
+from .models import Library, LibraryType, Show, Season, Episode, RecentContent  # ChatState is imported on-demand
 
 T = TypeVar("T")
 Page = Tuple[List[T], int]  # (items, total)
 
 
 def recent_content(s: Session, limit: int = 10) -> list[dict]:
-    """Return the latest scanned files with show, season, and library context."""
+    """Return recently completed downloads, independent of library scans."""
     limit = max(1, min(int(limit or 10), 25))
-    stmt = (
-        select(Episode, Season, Show, Library)
-        .join(Season, Episode.season_id == Season.id)
-        .join(Show, Season.show_id == Show.id)
-        .join(Library, Season.library_id == Library.id, isouter=True)
-        .order_by(Episode.id.desc())
-        .limit(limit)
-    )
-    rows = s.execute(stmt).all()
-    items: list[dict] = []
-    for episode, season, show, library in rows:
-        items.append(
-            {
-                "title": show.title,
-                "year": show.year,
-                "kind": show.kind,
-                "season": season.number,
-                "episode": episode.number,
-                "file_path": episode.file_path,
-                "library": library.name if library else None,
-            }
-        )
-    return items
+    rows = s.scalars(select(RecentContent).order_by(RecentContent.updated_at.desc(), RecentContent.id.desc()).limit(limit)).all()
+    return [
+        {
+            "title": item.title,
+            "year": item.year,
+            "kind": item.kind,
+            "season": item.season,
+            "destination": item.destination,
+            "source_label": item.source_label,
+            "message_link": item.message_link,
+            "updated_at": item.updated_at,
+        }
+        for item in rows
+    ]
+
+
+def record_recent_content(
+    s: Session,
+    *,
+    content_key: str,
+    title: str,
+    destination: str,
+    kind: Optional[str] = None,
+    year: Optional[int] = None,
+    season: Optional[int] = None,
+    source_label: Optional[str] = None,
+    message_link: Optional[str] = None,
+) -> RecentContent:
+    """Upsert a completed download so Recently Added does not depend on scans."""
+    key = str(content_key or destination)
+    item = s.scalars(select(RecentContent).where(RecentContent.content_key == key)).first()
+    if item is None:
+        item = RecentContent(content_key=key, title=title or "Content", destination=destination)
+        s.add(item)
+    item.title = title or item.title or "Content"
+    item.kind = kind
+    item.year = year
+    item.season = season
+    item.destination = destination
+    item.source_label = source_label
+    item.message_link = message_link
+    item.updated_at = datetime.now(timezone.utc)
+    s.flush()
+    return item
 
 
 # -------------------------------

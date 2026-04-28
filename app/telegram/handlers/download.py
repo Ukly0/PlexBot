@@ -18,6 +18,8 @@ from app.services.download_manager import DownloadManager
 from app.services.tmdb_client import tmdb_search, TMDbItem
 from config.settings import load_settings
 from app.telegram.state import set_state, STATE_SEARCH
+from app.infra.db import get_session
+from store.repos import record_recent_content
 
 SERIES_TYPES = {"series", "anime", "docuseries"}
 
@@ -96,8 +98,8 @@ def should_reset_after_enqueue(context: ContextTypes.DEFAULT_TYPE) -> bool:
 def _cart_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🎯 Asignar destino", callback_data="cart|assign")],
-            [InlineKeyboardButton("🛒 Ver bandeja", callback_data="action|cart")],
+            [InlineKeyboardButton("🎯 Choose destination", callback_data="cart|assign")],
+            [InlineKeyboardButton("🛒 View inbox", callback_data="action|cart")],
         ]
     )
 
@@ -301,7 +303,7 @@ async def finalize_selection(
         title = context.user_data.get("manual_title") or original_title_en or label or "Content"
         season_hint = context.chat_data.get("season_hint")
         await update.effective_message.reply_text(
-            f"Destino asignado: {download_dir}\nAñadiendo {len(cart_items)} elemento(s) de la bandeja a la cola."
+            f"Destination set: {download_dir}\nAdding {len(cart_items)} inbox item(s) to the queue."
         )
         for item in cart_items:
             item_link = item.get("link")
@@ -384,6 +386,24 @@ async def queue_download_task(
     content_id = selection_snapshot.get("base_dir") or path_clean
     content_label = title_for_post_snapshot
     content_destination = selection_snapshot.get("base_dir") or path_clean
+
+    def _record_recent() -> None:
+        try:
+            with get_session() as s:
+                record_recent_content(
+                    s,
+                    content_key=str(content_id),
+                    title=str(content_label or title or "Content"),
+                    destination=str(content_destination or path_clean),
+                    kind=lib_type_snapshot,
+                    year=year_snapshot,
+                    season=season_hint,
+                    source_label=display_name or link,
+                    message_link=link,
+                )
+                s.commit()
+        except Exception as e:
+            logging.warning("Could not record recent content for %s: %s", content_label, e)
 
     def _apply_permissions(path: str) -> None:
         """
@@ -572,6 +592,7 @@ async def queue_download_task(
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
 
         if ok:
+            await asyncio.to_thread(_record_recent)
             try:
                 done_text = f"✅ Done: {human_label}\n{path_clean}"
                 if not await _safe_edit(status_msg, done_text):
@@ -633,6 +654,7 @@ def _build_results_keyboard(results: list[TMDbItem], page: int = 0) -> InlineKey
     if pagination:
         buttons.append(pagination)
     buttons.append([InlineKeyboardButton("✍️ Manual entry", callback_data="manual|start")])
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="action|search"), InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")])
     return InlineKeyboardMarkup(buttons)
 
@@ -683,11 +705,11 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         count, added = _add_to_cart(context, link, is_text_link, file_name)
         if added:
             text = (
-                f"🛒 Añadido a la bandeja temporal.\nTotal: {count} elemento(s).\n\n"
-                "Cuando termines de reenviar archivos o enlaces, asigna un destino para encolarlo todo junto."
+                f"🛒 Added to the temporary inbox.\nTotal: {count} item(s).\n\n"
+                "When you finish forwarding links or files, choose a destination to enqueue everything together."
             )
         else:
-            text = f"🛒 Ese elemento ya estaba en la bandeja.\nTotal: {count} elemento(s)."
+            text = f"🛒 That item is already in the inbox.\nTotal: {count} item(s)."
         await message.reply_text(text, reply_markup=_cart_keyboard())
         return
 

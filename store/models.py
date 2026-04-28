@@ -108,6 +108,31 @@ def __repr__(self) -> str:
         n = f"E{self.number:02d}" if self.number is not None else "E??"
         return f"<Episode id={self.id}, season_id={self.season_id} {n} path={self.file_path}>"
 
+
+class RecentContent(Base):
+
+    __tablename__ = "recent_content"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    content_key = Column(String(512), nullable=False, unique=True)
+    title = Column(String(512), nullable=False)
+    kind = Column(String(64))
+    year = Column(Integer)
+    season = Column(Integer)
+    destination = Column(String(1024), nullable=False)
+    source_label = Column(String(512))
+    message_link = Column(String(1024))
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_recent_content_updated", "updated_at"),
+        Index("ix_recent_content_kind_title", "kind", "title"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RecentContent(id={self.id}, title={self.title}, kind={self.kind})>"
+
 class ChatState(Base):
 
     __tablename__ = "chat_states"

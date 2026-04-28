@@ -66,20 +66,30 @@ def _is_admin(update: Update) -> bool:
 
 
 def _main_menu_markup(is_admin: bool, cart_count: int = 0) -> InlineKeyboardMarkup:
-    cart_label = f"🛒 Bandeja ({cart_count})" if cart_count else "🛒 Bandeja"
+    cart_label = f"🛒 Inbox ({cart_count})" if cart_count else "🛒 Inbox"
     buttons = [
-        [InlineKeyboardButton("➕ Añadir contenido", callback_data="action|search")],
-        [InlineKeyboardButton(cart_label, callback_data="action|cart"), InlineKeyboardButton("⏳ Cola", callback_data="action|queue")],
-        [InlineKeyboardButton("🆕 Reciente", callback_data="action|recent"), InlineKeyboardButton("📚 Buscar biblioteca", callback_data="action|dbsearch")],
+        [InlineKeyboardButton("➕ Add content", callback_data="action|search")],
+        [InlineKeyboardButton(cart_label, callback_data="action|cart"), InlineKeyboardButton("⏳ Queue", callback_data="action|queue")],
+        [InlineKeyboardButton("🆕 Recently added", callback_data="action|recent")],
     ]
     if is_admin:
-        buttons.append([InlineKeyboardButton("⚙️ Administración", callback_data="action|admin")])
-    buttons.append([InlineKeyboardButton("❌ Cancelar flujo", callback_data="cancel|flow")])
+        buttons.append([InlineKeyboardButton("⚙️ Admin", callback_data="action|admin")])
+    buttons.append([InlineKeyboardButton("❌ Cancel current flow", callback_data="cancel|flow")])
     return InlineKeyboardMarkup(buttons)
 
 
 def _home_button() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]])
+
+
+def _add_content_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔍 Search TMDb", callback_data="action|search_tmdb")],
+            [InlineKeyboardButton("✍️ Manual entry", callback_data="manual|start")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="action|home")],
+        ]
+    )
 
 
 def _cart_items(context: ContextTypes.DEFAULT_TYPE) -> list[dict]:
@@ -92,7 +102,7 @@ def _cart_markup(has_items: bool, page: int = 0, total: int = 0) -> InlineKeyboa
         start = page * CART_PAGE_SIZE
         end = min(start + CART_PAGE_SIZE, total)
         for idx in range(start, end):
-            buttons.append([InlineKeyboardButton(f"❌ Quitar {idx + 1}", callback_data=f"cart|remove|{idx}")])
+            buttons.append([InlineKeyboardButton(f"❌ Remove {idx + 1}", callback_data=f"cart|remove|{idx}")])
         nav = []
         if page > 0:
             nav.append(InlineKeyboardButton("⬅️", callback_data=f"cart|page|{page - 1}"))
@@ -100,16 +110,16 @@ def _cart_markup(has_items: bool, page: int = 0, total: int = 0) -> InlineKeyboa
             nav.append(InlineKeyboardButton("➡️", callback_data=f"cart|page|{page + 1}"))
         if nav:
             buttons.append(nav)
-        buttons.append([InlineKeyboardButton("🎯 Asignar destino", callback_data="cart|assign")])
-        buttons.append([InlineKeyboardButton("🗑️ Vaciar bandeja", callback_data="cart|clear")])
-    buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")])
+        buttons.append([InlineKeyboardButton("🎯 Choose destination", callback_data="cart|assign")])
+        buttons.append([InlineKeyboardButton("🗑️ Clear inbox", callback_data="cart|clear")])
+    buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
     return InlineKeyboardMarkup(buttons)
 
 
 def _format_cart(context: ContextTypes.DEFAULT_TYPE, page: int | None = None) -> tuple[str, InlineKeyboardMarkup]:
     items = _cart_items(context)
     if not items:
-        return "🛒 La bandeja está vacía.\n\nReenvía enlaces o archivos de Telegram para añadirlos.", _cart_markup(False)
+        return "🛒 The inbox is empty.\n\nForward Telegram links or files to add them here.", _cart_markup(False)
     if page is None:
         page = int(context.user_data.get("cart_page") or 0)
     total_pages = max(1, (len(items) + CART_PAGE_SIZE - 1) // CART_PAGE_SIZE)
@@ -117,13 +127,13 @@ def _format_cart(context: ContextTypes.DEFAULT_TYPE, page: int | None = None) ->
     context.user_data["cart_page"] = page
     start = page * CART_PAGE_SIZE
     end = min(start + CART_PAGE_SIZE, len(items))
-    lines = [f"🛒 Bandeja temporal: {len(items)} elemento(s)", ""]
+    lines = [f"🛒 Temporary inbox: {len(items)} item(s)", ""]
     for idx, item in enumerate(items[start:end], start=start + 1):
-        label = item.get("filename") or item.get("link") or "Elemento"
+        label = item.get("filename") or item.get("link") or "Item"
         lines.append(f"{idx}. {_shorten(str(label), 54)}")
     if total_pages > 1:
-        lines.append(f"\nPágina {page + 1}/{total_pages}")
-    lines.append("\nAsigna un destino para encolar todo junto.")
+        lines.append(f"\nPage {page + 1}/{total_pages}")
+    lines.append("\nChoose a destination to enqueue everything together.")
     return "\n".join(lines), _cart_markup(True, page, len(items))
 
 
@@ -143,8 +153,8 @@ async def _reply_or_edit(update: Update, text: str, reply_markup=None):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cart_count = len(context.chat_data.get("cart") or [])
     text = (
-        "Panel principal de PlexBot\n\n"
-        "Envía enlaces o archivos para añadirlos a la bandeja, o usa los botones para buscar, revisar cola y administrar la biblioteca."
+        "PlexBot dashboard\n\n"
+        "Forward Telegram links or files to add them to the inbox, or use the buttons to search and manage the queue."
     )
     await _reply_or_edit(update, text, _main_menu_markup(_is_admin(update), cart_count))
 
@@ -159,54 +169,51 @@ async def show_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with get_session() as s:
             items = recent_content(s, 10)
     except OperationalError:
-        await _reply_or_edit(update, "La base de datos aún no está inicializada. Ejecuta un escaneo primero.", _home_button())
+        await _reply_or_edit(update, "The recent-content database is not initialized yet. Add content first.", _home_button())
         return
     except Exception as e:
-        await _reply_or_edit(update, f"No se pudo cargar contenido reciente: {e}", _home_button())
+        await _reply_or_edit(update, f"Could not load recently added content: {e}", _home_button())
         return
     if not items:
-        await _reply_or_edit(update, "No hay contenido reciente en la base de datos. Ejecuta un escaneo primero.", _home_button())
+        await _reply_or_edit(update, "No recently added content yet. Completed downloads will appear here.", _home_button())
         return
-    lines = ["🆕 Contenido reciente", ""]
+    lines = ["🆕 Recently added", ""]
     for item in items:
         year = f" ({item['year']})" if item.get("year") else ""
+        kind = str(item.get("kind") or "")
         season = item.get("season")
-        episode = item.get("episode")
-        ep = ""
-        if season is not None and episode is not None:
-            ep = f" S{season:02d}E{episode:02d}"
-        elif season is not None:
-            ep = f" S{season:02d}"
-        lib = f" · {item['library']}" if item.get("library") else ""
-        lines.append(f"- {item['title']}{year}{ep}{lib}")
+        detail = ""
+        if kind in {"series", "anime", "docuseries"} and season is not None:
+            detail = f" - Season {season}"
+        destination = Path(item.get("destination") or "").name
+        dest_note = f" · {destination}" if destination else ""
+        lines.append(f"- {item['title']}{year}{detail}{dest_note}")
     await _reply_or_edit(update, "\n".join(lines), _home_button())
 
 
 async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
-        await _reply_or_edit(update, "Esta sección es solo para administradores.", _home_button())
+        await _reply_or_edit(update, "This section is only available to admins.", _home_button())
         return
     buttons = [
-        [InlineKeyboardButton("🧭 Escanear librerías", callback_data="action|scan")],
-        [InlineKeyboardButton("📊 Estadísticas DB", callback_data="action|dbstats")],
-        [InlineKeyboardButton("🧹 Limpiar temporales", callback_data="action|clean_tmp")],
-        [InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")],
+        [InlineKeyboardButton("🧹 Clean temp folders", callback_data="action|clean_tmp")],
+        [InlineKeyboardButton("🏠 Main menu", callback_data="action|home")],
     ]
-    await _reply_or_edit(update, "⚙️ Administración", InlineKeyboardMarkup(buttons))
+    await _reply_or_edit(update, "⚙️ Admin", InlineKeyboardMarkup(buttons))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_main_menu(update, context)
 
 
-async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(context.user_data, STATE_SEARCH)
     await update.message.reply_text("Type a title to search (TMDb).")
 
 
 # English alias
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await buscar(update, context)
+    await start_search(update, context)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,7 +250,7 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = _format_queue_view(running, queued)
     if markup:
         buttons = list(markup.inline_keyboard)
-        buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")])
+        buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
         markup = InlineKeyboardMarkup(buttons)
     else:
         markup = _home_button()
@@ -276,7 +283,7 @@ async def handle_queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE
     text, markup = _format_queue_view(running, queued, note=note)
     if markup:
         buttons = list(markup.inline_keyboard)
-        buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")])
+        buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
         markup = InlineKeyboardMarkup(buttons)
     else:
         markup = _home_button()
@@ -315,20 +322,44 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "home":
         await show_main_menu(update, context)
     elif action == "search":
+        await query.message.edit_text("Add content\n\nChoose how you want to select the destination metadata.", reply_markup=_add_content_markup())
+    elif action == "search_tmdb":
         set_state(context.user_data, STATE_SEARCH)
-        await query.message.edit_text("Escribe el título para buscarlo en TMDb.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")]]))
+        await query.message.edit_text(
+            "Type a title to search TMDb.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|search"), InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]]),
+        )
+    elif action == "results":
+        from app.telegram.handlers.search import render_results_message
+
+        results = context.user_data.get("results_list") or []
+        page = int(context.user_data.get("results_page") or 0)
+        await render_results_message(query.message, results, page)
+    elif action == "categories":
+        from app.telegram.handlers.search import _format_item_preview, build_category_keyboard
+
+        pending = context.user_data.get("pending_show") or {}
+        results = context.user_data.get("results_map") or {}
+        item = results.get(f"{pending.get('kind')}:{pending.get('id')}")
+        if item:
+            text = f"{_format_item_preview(item)}\n\nSelect a library type."
+        else:
+            title = pending.get("label") or "Selected title"
+            year = f" ({pending.get('year')})" if pending.get("year") else ""
+            text = f"{title}{year}\n\nSelect a library type."
+        await query.message.edit_text(text, reply_markup=build_category_keyboard())
     elif action == "cart":
         await show_cart(update, context)
     elif action == "queue":
         mgr = context.bot_data.get("dl_manager")
         if not mgr or not hasattr(mgr, "snapshot_by_content"):
-            await query.message.edit_text("La cola está vacía.", reply_markup=_home_button())
+            await query.message.edit_text("The queue is empty.", reply_markup=_home_button())
             return
         running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
         text, markup = _format_queue_view(running, queued)
         if markup:
             buttons = list(markup.inline_keyboard)
-            buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")])
+            buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
             markup = InlineKeyboardMarkup(buttons)
         else:
             markup = _home_button()
@@ -337,22 +368,19 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_recent(update, context)
     elif action == "dbsearch":
         set_state(context.user_data, STATE_DB_SEARCH)
-        await query.message.edit_text("Escribe el texto a buscar en la biblioteca local.", reply_markup=_home_button())
+        await query.message.edit_text("Type a title fragment to search the local library.", reply_markup=_home_button())
     elif action == "dbstats":
         if not _is_admin(update):
-            await query.message.edit_text("Esta acción es solo para administradores.", reply_markup=_home_button())
+            await query.message.edit_text("This action is only available to admins.", reply_markup=_home_button())
             return
         await db_stats_view(update, context)
     elif action == "admin":
         await show_admin(update, context)
     elif action == "scan":
-        if not _is_admin(update):
-            await query.message.edit_text("Esta acción es solo para administradores.", reply_markup=_home_button())
-            return
-        await scan_libraries(update, context, from_callback=True)
+        await query.message.edit_text("Library scanning is disabled for now. Recently added content is tracked from completed downloads.", reply_markup=_home_button())
     elif action == "clean_tmp":
         if not _is_admin(update):
-            await query.message.edit_text("Esta acción es solo para administradores.", reply_markup=_home_button())
+            await query.message.edit_text("This action is only available to admins.", reply_markup=_home_button())
             return
         await clean_tmp(update, context)
     else:
@@ -367,7 +395,7 @@ async def handle_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if action == "assign":
         cart = context.chat_data.get("cart") or []
         if not cart:
-            await query.message.edit_text("La bandeja está vacía.", reply_markup=_home_button())
+            await query.message.edit_text("The inbox is empty.", reply_markup=_home_button())
             return
         first_name = next((item.get("filename") for item in cart if item.get("filename")), None)
         if first_name:
@@ -382,7 +410,7 @@ async def handle_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             context.user_data["results_page"] = 0
             if results:
                 await query.message.edit_text(
-                    f"Sugerencia desde la bandeja: {first_name}\nSelecciona el título o escribe otra búsqueda.",
+                    f"Suggestion from inbox: {first_name}\nSelect the title, or type another search.",
                     reply_markup=build_results_keyboard(results, 0),
                 )
                 return
@@ -390,12 +418,15 @@ async def handle_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             note = f"\nTMDb: {err}" if err else ""
             set_state(context.user_data, STATE_SEARCH)
             await query.message.edit_text(
-                f"No encontré resultados para '{guess}'.{note}\nEscribe el título para buscar manualmente.",
-                reply_markup=_home_button(),
+                f"No results found for '{guess}'.{note}\nType a title to search manually.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|cart"), InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]]),
             )
             return
         set_state(context.user_data, STATE_SEARCH)
-        await query.message.edit_text("Escribe el título para asignar destino a toda la bandeja.", reply_markup=_home_button())
+        await query.message.edit_text(
+            "Type a title to choose a destination for the whole inbox.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|cart"), InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]]),
+        )
     elif action == "page" and len(parts) == 3:
         try:
             page = int(parts[2])
@@ -407,7 +438,7 @@ async def handle_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             idx = int(parts[2])
         except ValueError:
-            await query.answer("Elemento inválido.", show_alert=True)
+            await query.answer("Invalid item.", show_alert=True)
             return
         cart = context.chat_data.get("cart") or []
         if 0 <= idx < len(cart):
@@ -420,10 +451,10 @@ async def handle_cart_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text, markup = _format_cart(context, 0)
             await query.message.edit_text(text, reply_markup=markup)
         else:
-            await query.answer("Ese elemento ya no existe.", show_alert=True)
+            await query.answer("That item no longer exists.", show_alert=True)
     elif action == "clear":
         context.chat_data.pop("cart", None)
-        await query.message.edit_text("Bandeja vaciada.", reply_markup=_home_button())
+        await query.message.edit_text("Inbox cleared.", reply_markup=_home_button())
     else:
         await show_cart(update, context)
 
@@ -435,12 +466,12 @@ async def db_stats_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             seasons = s.scalar(s.query(func.count()).select_from(Season)) or 0
             shows_total = s.scalar(s.query(func.count()).select_from(Show)) or 0
     except OperationalError:
-        await _reply_or_edit(update, "DB no inicializada. Ejecuta init-db, seed-libs y luego un escaneo.", _home_button())
+        await _reply_or_edit(update, "DB is not initialized. Run init-db, seed-libs, and then a library scan.", _home_button())
         return
     except Exception as e:
         await _reply_or_edit(update, f"DB stats failed: {e}", _home_button())
         return
-    lines = ["📊 Estadísticas DB", f"Títulos: {shows_total}", f"Temporadas: {seasons}"]
+    lines = ["📊 DB stats", f"Titles: {shows_total}", f"Seasons: {seasons}"]
     for kind, count in totals:
         lines.append(f"- {kind}: {count}")
     await _reply_or_edit(update, "\n".join(lines), _home_button())
@@ -448,7 +479,7 @@ async def db_stats_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clean_tmp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
-        await _reply_or_edit(update, "Esta acción es solo para administradores.", _home_button())
+        await _reply_or_edit(update, "This action is only available to admins.", _home_button())
         return
 
     import shutil
@@ -480,8 +511,11 @@ async def clean_tmp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def scan_libraries(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback: bool = False):
     if not _is_admin(update):
-        await _reply_or_edit(update, "Esta acción es solo para administradores.", _home_button())
+        await _reply_or_edit(update, "This action is only available to admins.", _home_button())
         return
+
+    await _reply_or_edit(update, "Library scanning is disabled for now. Recently added content is tracked from completed downloads.", _home_button())
+    return
 
     # Run scan in background thread to avoid blocking
     from fs.scanner import scan_all_libraries

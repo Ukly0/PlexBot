@@ -19,7 +19,7 @@ def _is_admin(update: Update) -> bool:
 
 
 def _home_button() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]])
 
 
 def _format_show(show):
@@ -48,7 +48,7 @@ def _build_results(shows, page: int = 0):
         nav.append(InlineKeyboardButton("➡️", callback_data=f"dbpage|{page+1}"))
     if nav:
         buttons.append(nav)
-    buttons.append([InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")])
+    buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
     return InlineKeyboardMarkup(buttons) if buttons else None
 
 
@@ -107,7 +107,7 @@ async def db_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def db_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
-        await update.message.reply_text("Esta acción es solo para administradores.", reply_markup=_home_button())
+        await update.message.reply_text("This action is only available to admins.", reply_markup=_home_button())
         return
     try:
         with get_session() as s:

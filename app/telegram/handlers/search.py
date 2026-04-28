@@ -13,6 +13,10 @@ PAGE_SIZE = 5
 SEASON_TYPES = {"series", "anime", "docuseries"}
 
 
+def _home_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton("🏠 Main menu", callback_data="action|home")
+
+
 def build_results_keyboard(results: List[TMDbItem], page: int = 0) -> InlineKeyboardMarkup:
     start = page * PAGE_SIZE
     slice_items = results[start : start + PAGE_SIZE]
@@ -38,6 +42,7 @@ def build_results_keyboard(results: List[TMDbItem], page: int = 0) -> InlineKeyb
         buttons.append(pagination)
 
     buttons.append([InlineKeyboardButton("✍️ Manual entry", callback_data="manual|start")])
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="action|search"), _home_button()])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -52,6 +57,7 @@ def build_season_keyboard(seasons: List[TMDbSeason]) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     buttons.append([InlineKeyboardButton("🔢 Other season", callback_data="season|manual")])
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="action|categories"), _home_button()])
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")])
     return InlineKeyboardMarkup(buttons)
 
@@ -85,11 +91,12 @@ def build_category_keyboard() -> InlineKeyboardMarkup:
             row = []
     if row:
         buttons.append(row)
+    buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="action|results"), _home_button()])
     buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")])
     return InlineKeyboardMarkup(buttons)
 
 
-async def _send_poster(query, item: TMDbItem):
+def _format_item_preview(item: TMDbItem) -> str:
     title = f"{item.title} ({item.year})" if item.year else item.title
     rating = f"⭐ {item.rating:.1f}/10" if item.rating else ""
     overview = (item.overview or "").strip()
@@ -100,14 +107,7 @@ async def _send_poster(query, item: TMDbItem):
         lines.append(rating)
     if overview:
         lines.append(overview)
-    caption = "\n".join(lines)
-    try:
-        if item.poster:
-            await query.message.reply_photo(item.poster, caption=caption)
-            return
-    except Exception:
-        pass
-    await query.message.reply_text(caption)
+    return "\n".join(lines)
 
 
 async def render_results(target, results: List[TMDbItem], page: int):
@@ -115,6 +115,13 @@ async def render_results(target, results: List[TMDbItem], page: int):
         await target.reply_text("No results. Type another title or use manual entry.")
         return
     await target.reply_text("Results:", reply_markup=build_results_keyboard(results, page))
+
+
+async def render_results_message(message, results: List[TMDbItem], page: int):
+    if not results:
+        await message.edit_text("No results. Type another title or use manual entry.", reply_markup=InlineKeyboardMarkup([[_home_button()]]))
+        return
+    await message.edit_text("Results:", reply_markup=build_results_keyboard(results, page))
 
 
 async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,10 +164,8 @@ async def handle_tmdb_selection(update: Update, context: ContextTypes.DEFAULT_TY
         "year": item.year,
         "title_en": item.title,  # TMDb ya entrega en idioma original
     }
-    await _send_poster(query, item)
-    info = f"{item.title} ({item.year})" if item.year else item.title
-    await query.message.reply_text(
-        f"{info}\nSelect a category to classify.",
+    await query.message.edit_text(
+        f"{_format_item_preview(item)}\n\nSelect a library type.",
         reply_markup=build_category_keyboard(),
     )
 
@@ -181,15 +186,15 @@ async def handle_category_selection(update: Update, context: ContextTypes.DEFAUL
     if lib_type in SEASON_TYPES:
         seasons = tmdb_seasons(pending.get("id")) if pending else []
         if seasons:
-            await query.message.reply_text(
+            await query.message.edit_text(
                 f"{label_fmt}\nChoose a season:",
                 reply_markup=build_season_keyboard(seasons),
             )
             context.user_data["pending_manual_type"] = lib_type
             return
-        await query.message.reply_text(
+        await query.message.edit_text(
             f"{label_fmt}\nCould not fetch seasons. Type the season number or cancel.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|categories"), _home_button()], [InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")]]),
         )
         context.user_data["pending_manual_type"] = lib_type
         set_state(context.user_data, STATE_MANUAL_SEASON)
@@ -206,14 +211,14 @@ async def handle_season_selection(update: Update, context: ContextTypes.DEFAULT_
         return
     _, val = parts
     if val == "manual":
-        await query.message.reply_text("Type the season number.")
+        await query.message.edit_text("Type the season number.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|categories"), _home_button()]]))
         set_state(context.user_data, STATE_MANUAL_SEASON)
         context.user_data["pending_manual_type"] = context.user_data.get("pending_manual_type", "series")
         return
     try:
         season_num = int(val)
     except ValueError:
-        await query.message.reply_text("Invalid season.")
+        await query.message.edit_text("Invalid season.", reply_markup=InlineKeyboardMarkup([[_home_button()]]))
         return
     pending = context.user_data.get("pending_show") or {}
     label = pending.get("label")
@@ -227,7 +232,7 @@ async def handle_season_selection(update: Update, context: ContextTypes.DEFAULT_
 async def handle_manual_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("No match. Type the title manually.")
+    await query.edit_message_text("Type the title manually.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|search"), _home_button()]]))
     set_state(context.user_data, STATE_MANUAL_TITLE)
 
 
@@ -241,7 +246,7 @@ async def handle_manual_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
     title = context.user_data.get("manual_title") or "Title"
     if lib_type in SEASON_TYPES:
         context.user_data["pending_manual_type"] = lib_type
-        await query.edit_message_text(f"{title}\nType the season number.")
+        await query.edit_message_text(f"{title}\nType the season number.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="action|categories"), _home_button()]]))
         set_state(context.user_data, STATE_MANUAL_SEASON)
     else:
         await finalize_selection(update, context, lib_type=lib_type, season=None, label=title, original_title_en=title)
@@ -262,7 +267,7 @@ async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
         msg += f" Cancelled {cancelled} running download(s)."
     await query.message.edit_text(
         msg,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")]]),
+        reply_markup=InlineKeyboardMarkup([[_home_button()]]),
     )
 
 
