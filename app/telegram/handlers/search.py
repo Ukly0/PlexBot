@@ -3,10 +3,11 @@ from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.telegram.state import STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
+from app.telegram.state import STATE_DB_SEARCH, STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
 from app.services.tmdb_client import TMDbItem, TMDbSeason, tmdb_search, tmdb_seasons, tmdb_last_error
 from .download import finalize_selection, handle_download_message
 from config.settings import load_settings, DEFAULT_CATEGORY_LABELS
+from app.telegram.handlers.db import search_db_titles
 
 PAGE_SIZE = 5
 SEASON_TYPES = {"series", "anime", "docuseries"}
@@ -249,10 +250,9 @@ async def handle_manual_type(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    context.user_data.clear()
-    context.chat_data.pop("tdl_extra_flags", None)
-    for key in ["download_dir", "season_hint", "active_selection", "selected_type"]:
-        context.chat_data.pop(key, None)
+    from app.telegram.state import reset_flow_state
+
+    reset_flow_state(context)
     mgr = context.bot_data.get("dl_manager")
     cancelled = 0
     if mgr and hasattr(mgr, "cancel_running"):
@@ -260,7 +260,10 @@ async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg = "Flow cancelled."
     if cancelled:
         msg += f" Cancelled {cancelled} running download(s)."
-    await query.message.reply_text(f"{msg} Use /search to start over.")
+    await query.message.edit_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menú principal", callback_data="action|home")]]),
+    )
 
 
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,6 +286,11 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "No results. Type another title or use manual entry.", reply_markup=build_category_keyboard()
             )
             context.user_data["manual_title"] = text
+        return
+
+    if awaiting == STATE_DB_SEARCH:
+        set_state(context.user_data, None)
+        await search_db_titles(update, context, text)
         return
 
     if awaiting == STATE_MANUAL_TITLE:
