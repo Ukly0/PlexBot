@@ -22,11 +22,38 @@ from typing import Optional, Tuple, List, Iterable, TypeVar
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from fs.scanner import season_from_dirname, parse_season_episode_from_filename, safe_unicode
 from .models import Library, LibraryType, Show, Season, Episode  # ChatState is imported on-demand
 
 T = TypeVar("T")
 Page = Tuple[List[T], int]  # (items, total)
+
+
+def recent_content(s: Session, limit: int = 10) -> list[dict]:
+    """Return the latest scanned files with show, season, and library context."""
+    limit = max(1, min(int(limit or 10), 25))
+    stmt = (
+        select(Episode, Season, Show, Library)
+        .join(Season, Episode.season_id == Season.id)
+        .join(Show, Season.show_id == Show.id)
+        .join(Library, Season.library_id == Library.id, isouter=True)
+        .order_by(Episode.id.desc())
+        .limit(limit)
+    )
+    rows = s.execute(stmt).all()
+    items: list[dict] = []
+    for episode, season, show, library in rows:
+        items.append(
+            {
+                "title": show.title,
+                "year": show.year,
+                "kind": show.kind,
+                "season": season.number,
+                "episode": episode.number,
+                "file_path": episode.file_path,
+                "library": library.name if library else None,
+            }
+        )
+    return items
 
 
 # -------------------------------
@@ -49,6 +76,8 @@ def _show_and_season_from_path(file_path: Path, lib_root: Path) -> Tuple[str, Op
     - season_number = from season folder or filename
     - year = if show name looks like 'Name(YYYY)'
     """
+    from fs.scanner import season_from_dirname, parse_season_episode_from_filename, safe_unicode
+
     rel = file_path.relative_to(lib_root)
     parts = rel.parts
     if len(parts) < 1:

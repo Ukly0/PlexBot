@@ -3,6 +3,7 @@ from typing import Dict, Optional
 STATE_SEARCH = "search_query"
 STATE_MANUAL_TITLE = "manual_title"
 STATE_MANUAL_SEASON = "manual_season"
+STATE_DB_SEARCH = "db_search"
 
 def set_state(user_data: Dict, state: Optional[str]) -> None:
     if state:
@@ -21,6 +22,8 @@ def reset_flow_state(context) -> None:
         "results_list",
         "results_map",
         "results_page",
+        "db_results",
+        "db_page",
     ]:
         context.user_data.pop(key, None)
     for key in [
@@ -32,5 +35,6 @@ def reset_flow_state(context) -> None:
         "pending_link",
         "pending_link_is_text",
         "pending_filename",
+        "cart",
     ]:
         context.chat_data.pop(key, None)

@@ -93,6 +93,23 @@ def should_reset_after_enqueue(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return not lib_type or lib_type not in SERIES_TYPES
 
 
+def _cart_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🎯 Asignar destino", callback_data="cart|assign")],
+            [InlineKeyboardButton("🛒 Ver bandeja", callback_data="action|cart")],
+        ]
+    )
+
+
+def _add_to_cart(context: ContextTypes.DEFAULT_TYPE, link: str, is_text_link: bool, filename: Optional[str]) -> tuple[int, bool]:
+    cart = context.chat_data.setdefault("cart", [])
+    if any(item.get("link") == link for item in cart):
+        return len(cart), False
+    cart.append({"link": link, "is_text": is_text_link, "filename": filename})
+    return len(cart), True
+
+
 ProgressCb = Callable[[int, str], Awaitable[None]]
 
 
@@ -278,6 +295,32 @@ async def finalize_selection(
     pending_link = context.chat_data.pop("pending_link", None)
     pending_is_text = bool(context.chat_data.pop("pending_link_is_text", False))
     pending_filename = context.chat_data.pop("pending_filename", None)
+    cart_items = context.chat_data.pop("cart", [])
+
+    if cart_items:
+        title = context.user_data.get("manual_title") or original_title_en or label or "Content"
+        season_hint = context.chat_data.get("season_hint")
+        await update.effective_message.reply_text(
+            f"Destino asignado: {download_dir}\nAñadiendo {len(cart_items)} elemento(s) de la bandeja a la cola."
+        )
+        for item in cart_items:
+            item_link = item.get("link")
+            if not item_link:
+                continue
+            await queue_download_task(
+                update.effective_message,
+                context,
+                item_link,
+                download_dir,
+                title,
+                season_hint,
+                year,
+                bool(item.get("is_text")),
+                item.get("filename") or item_link,
+            )
+        if should_reset_after_enqueue(context):
+            reset_destination(context)
+        return
 
     if pending_link:
         title = context.user_data.get("manual_title") or original_title_en or label or "Content"
@@ -637,16 +680,15 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         elif message.video:
             file_name = message.video.file_name
 
-        context.chat_data["pending_link"] = link
-        context.chat_data["pending_link_is_text"] = is_text_link
-        if file_name:
-            context.chat_data["pending_filename"] = file_name
-            await prompt_tmdb_from_filename(message, context, file_name)
-            return
-
-        # If no filename to infer, ask user to search/select title explicitly.
-        set_state(context.user_data, STATE_SEARCH)
-        await message.reply_text("Type a title to search (TMDb) to set destination.")
+        count, added = _add_to_cart(context, link, is_text_link, file_name)
+        if added:
+            text = (
+                f"🛒 Añadido a la bandeja temporal.\nTotal: {count} elemento(s).\n\n"
+                "Cuando termines de reenviar archivos o enlaces, asigna un destino para encolarlo todo junto."
+            )
+        else:
+            text = f"🛒 Ese elemento ya estaba en la bandeja.\nTotal: {count} elemento(s)."
+        await message.reply_text(text, reply_markup=_cart_keyboard())
         return
 
     title = context.user_data.get("manual_title") or context.user_data.get("pending_show", {}).get("label", "Content")

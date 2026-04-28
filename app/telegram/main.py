@@ -18,6 +18,7 @@ from app.telegram.handlers.commands import (
     start,
     menu,
     handle_action,
+    handle_cart_action,
     scan_libraries,
     clean_tmp,
     season,
@@ -92,6 +93,7 @@ def main():
 
     # Inline keyboard callbacks
     app.add_handler(CallbackQueryHandler(handle_action, pattern=r"^action\|"))
+    app.add_handler(CallbackQueryHandler(handle_cart_action, pattern=r"^cart\|"))
     app.add_handler(CallbackQueryHandler(handle_tmdb_selection, pattern=r"^tmdb\|"))
     app.add_handler(CallbackQueryHandler(handle_category_selection, pattern=r"^cat\|"))
     app.add_handler(CallbackQueryHandler(handle_season_selection, pattern=r"^season\|"))
