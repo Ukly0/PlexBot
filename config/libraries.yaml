@@ -10,20 +10,21 @@
 libraries:
   - name: "TV Shows"
     type: series
-    root: /media/tv
+    root: /media/storage/data/media/tv
 
   - name: "Movies"
     type: movie
-    root: /media/movies
+    root: /media/storage/data/media/movies
 
   - name: "Anime"
     type: series
-    root: /media/anime
+    root: /media/storage/data/media/anime
 
 # ── Download settings ───────────────────────────────────────────────
 
 download:
   # tdl download template. {url} and {dir} are filled at runtime.
-  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
+  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0
+    --template "{{ .FileName }}"'
   # Optional: dedicated TDL session directory to avoid DB locks with other clients.
   # tdl_home: /data/tdl
