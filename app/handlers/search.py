@@ -212,8 +212,11 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if item.poster:
             await query.message.delete()
-            await query.message.reply_photo(
-                photo=item.poster, caption=text, reply_markup=markup
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=item.poster,
+                caption=text,
+                reply_markup=markup,
             )
         else:
             await query.message.edit_text(text, reply_markup=markup)
@@ -224,8 +227,11 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     text = f"{_format_item_preview(item)}\n\nSelect destination library:"
     if item.poster:
         await query.message.delete()
-        await query.message.reply_photo(
-            photo=item.poster, caption=text, reply_markup=markup
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=item.poster,
+            caption=text,
+            reply_markup=markup,
         )
     else:
         await query.message.edit_text(text, reply_markup=markup)
