@@ -36,13 +36,23 @@ async def _reply_or_edit(update: Update, text: str, reply_markup=None):
     query = update.callback_query
     if query and query.message:
         try:
-            await query.message.edit_text(text, reply_markup=reply_markup)
+            if query.message.photo:
+                await query.message.edit_caption(caption=text, reply_markup=reply_markup)
+            else:
+                await query.message.edit_text(text, reply_markup=reply_markup)
             return
         except Exception:
             await query.message.reply_text(text, reply_markup=reply_markup)
             return
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def _edit_query_message(query, text: str, reply_markup=None):
+    if query.message.photo:
+        await query.message.edit_caption(caption=text, reply_markup=reply_markup)
+    else:
+        await query.message.edit_text(text, reply_markup=reply_markup)
 
 
 def _main_menu_markup(is_admin: bool) -> InlineKeyboardMarkup:
@@ -268,7 +278,8 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from app.state import set_state, STATE_SEARCH
 
         set_state(context.user_data, STATE_SEARCH)
-        await query.message.edit_text(
+        await _edit_query_message(
+            query,
             "Type a title to search TMDb.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]]
@@ -277,8 +288,8 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "queue":
         mgr = context.bot_data.get("dl_manager")
         if not mgr or not hasattr(mgr, "snapshot_by_content"):
-            await query.message.edit_text(
-                "Queue is empty.", reply_markup=_home_button()
+            await _edit_query_message(
+                query, "Queue is empty.", reply_markup=_home_button()
             )
             return
         running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
@@ -316,7 +327,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]
             )
             markup = InlineKeyboardMarkup(buttons)
-        await query.message.edit_text("\n".join(lines), reply_markup=markup)
+        await _edit_query_message(query, "\n".join(lines), reply_markup=markup)
     elif action == "recent":
         await show_recent(update, context)
     elif action == "admin":
