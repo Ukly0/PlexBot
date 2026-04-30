@@ -334,5 +334,44 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_admin(update, context)
     elif action == "clean_tmp":
         await clean_tmp(update, context)
+    elif action == "continue_batch":
+        # Process all pending links to the current destination
+        pending: list = context.chat_data.get("pending_links", [])
+        download_dir = context.chat_data.get("download_dir")
+        title = context.user_data.get("pending_title") or "Content"
+        season = context.chat_data.get("season_hint")
+        year = context.user_data.get("pending_year")
+        if not pending or not download_dir:
+            await query.message.reply_text("Nothing to queue.", reply_markup=_home_button())
+            return
+        from app.handlers.download import queue_download
+
+        await query.message.edit_text(f"Queuing {len(pending)} item(s) for '{title}'...")
+        for item in pending:
+            await queue_download(
+                query.message, context, item["link"],
+                download_dir, title, season, year,
+                item.get("filename") or item["link"],
+            )
+        context.chat_data["pending_links"] = []
+        active_lib = context.chat_data.get("active_library") or {}
+        if active_lib.get("type") not in {"series", "anime"}:
+            context.chat_data.pop("download_dir", None)
+            context.chat_data.pop("active_library", None)
+            context.chat_data.pop("season_hint", None)
+            context.user_data.pop("pending_title", None)
+            context.user_data.pop("pending_year", None)
+    elif action == "new_search":
+        context.chat_data.pop("download_dir", None)
+        context.chat_data.pop("active_library", None)
+        context.chat_data.pop("season_hint", None)
+        context.chat_data.pop("pending_links", None)
+        context.user_data.pop("pending_title", None)
+        context.user_data.pop("pending_year", None)
+        context.user_data.pop("state", None)
+        await query.message.edit_text(
+            "Destination cleared. Forward a link or file to start a new search.",
+            reply_markup=_home_button(),
+        )
     else:
         await query.message.reply_text("Unknown action.")

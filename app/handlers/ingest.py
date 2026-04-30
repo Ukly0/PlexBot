@@ -5,7 +5,7 @@ import re
 import logging
 from typing import Optional
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.services.tmdb import search as tmdb_search, tmdb_last_error
@@ -138,22 +138,32 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     if not link:
         return
 
-    # If destination is already set, queue directly
+    # If destination is already set, confirm or start fresh
     download_dir = context.chat_data.get("download_dir")
     if download_dir:
         title = context.user_data.get("pending_title") or "Content"
         season = context.chat_data.get("season_hint")
         year = context.user_data.get("pending_year")
-        await queue_download(
-            message, context, link, download_dir, title, season, year, filename or link
-        )
         active_lib = context.chat_data.get("active_library") or {}
-        if active_lib.get("type") not in {"series", "anime"}:
-            context.chat_data.pop("download_dir", None)
-            context.chat_data.pop("active_library", None)
-            context.chat_data.pop("season_hint", None)
-            context.user_data.pop("pending_title", None)
-            context.user_data.pop("pending_year", None)
+        lib_name = active_lib.get("name", "")
+
+        _add_pending(context, link, filename)
+        await message.reply_text(
+            f"Currently downloading: {title}"
+            + (f" S{season:02d}" if season else "")
+            + (f" → {lib_name}" if lib_name else "")
+            + "\n\nQueue as part of this batch or start a new search?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "Continue batch", callback_data="action|continue_batch"
+                    ),
+                    InlineKeyboardButton(
+                        "New search", callback_data="action|new_search"
+                    ),
+                ]
+            ]),
+        )
         return
 
     # No destination set — store link in pending queue
