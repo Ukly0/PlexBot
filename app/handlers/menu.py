@@ -362,16 +362,67 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_title", None)
             context.user_data.pop("pending_year", None)
     elif action == "new_search":
+        # Keep the pending links, clear destination, trigger auto-detect on them
+        pending: list = context.chat_data.get("pending_links", [])
         context.chat_data.pop("download_dir", None)
         context.chat_data.pop("active_library", None)
         context.chat_data.pop("season_hint", None)
-        context.chat_data.pop("pending_links", None)
         context.user_data.pop("pending_title", None)
         context.user_data.pop("pending_year", None)
         context.user_data.pop("state", None)
-        await query.message.edit_text(
-            "Destination cleared. Forward a link or file to start a new search.",
-            reply_markup=_home_button(),
-        )
+
+        if not pending:
+            await query.message.edit_text(
+                "Destination cleared. Forward a link or file to start a new search.",
+                reply_markup=_home_button(),
+            )
+            return
+
+        # Use the first pending item's filename to trigger auto-detection
+        first = pending[0]
+        guess = None
+        fname = first.get("filename")
+        if fname:
+            from app.handlers.ingest import _guess_title, _is_meaningful
+            guess = _guess_title(fname)
+
+        if guess and _is_meaningful(guess):
+            from app.services.tmdb import search as tmdb_search, tmdb_last_error
+            from app.handlers.search import build_results_keyboard
+
+            results = tmdb_search(guess)
+            context.user_data["tmdb_results"] = results
+            context.user_data["tmdb_page"] = 0
+            context.user_data["state"] = "pending_selection"
+
+            if results:
+                first_result = results[0]
+                markup = build_results_keyboard(results, 0)
+                if first_result.poster:
+                    await query.message.delete()
+                    await context.bot.send_photo(
+                        chat_id=update.effective_chat.id,
+                        photo=first_result.poster,
+                        caption=f"Detected: {guess}\nSelect the matching title:",
+                        reply_markup=markup,
+                    )
+                else:
+                    await query.message.edit_text(
+                        f"Detected: {guess}\nSelect the matching title:",
+                        reply_markup=markup,
+                    )
+            else:
+                from app.state import STATE_SEARCH, set_state
+                set_state(context.user_data, STATE_SEARCH)
+                await query.message.edit_text(
+                    f"Detected: {guess}\nNo TMDb results. Type a title to search.",
+                )
+        else:
+            from app.state import STATE_SEARCH, set_state
+            set_state(context.user_data, STATE_SEARCH)
+            hint = f"(from: {fname})" if fname else ""
+            await query.message.edit_text(
+                f"New search {hint}\nType a title to search.",
+            )
     else:
         await query.message.reply_text("Unknown action.")
