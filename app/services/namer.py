@@ -1,33 +1,50 @@
+"""Plex-safe filename sanitization, SxxExx parsing, and bulk renaming.
+
+CRITICAL: Every filename/folder written to disk MUST go through these helpers.
+Plex requires ASCII-only names: no accents, no ñ, no special chars.
+"""
+
 import re
-import os
+import unicodedata
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 RX_SE = re.compile(r"S?(\d{1,2})[xEex](\d{1,3})", re.I)
 RX_SE_ALT = re.compile(r"S(\d{1,2})E(\d{1,3})", re.I)
 RX_E_ONLY = re.compile(r"E(\d{1,3})", re.I)
-RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")  # 101 -> S01E01
+RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")
 
-# Accepted video extensions (keep in sync with ingest/scanner)
 VIDEO_EXT = {
-    ".mkv",
-    ".mp4",
-    ".avi",
-    ".mov",
-    ".ts",
-    ".m4v",
-    ".webm",
-    ".flv",
-    ".wmv",
-    ".mpg",
-    ".mpeg",
-    ".m2ts",
-    ".mts",
+    ".mkv", ".mp4", ".avi", ".mov", ".ts", ".m4v",
+    ".webm", ".flv", ".wmv", ".mpg", ".mpeg", ".m2ts", ".mts",
 }
 INVALID_FS_CHARS = set('<>:"/\\|?*')
 
 
-def parse_season_episode(name: str, season_hint: Optional[int] = None) -> Tuple[Optional[int], Optional[int]]:
+def _ascii_safe(text: str) -> str:
+    """Normalize to closest ASCII: ñ→n, é→e, etc."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return nfkd.encode("ascii", "ignore").decode("ascii")
+
+
+def safe_title(title: str) -> str:
+    """
+    Sanitize a title for Plex filesystem use:
+    - Normalize unicode (accents, ñ → ASCII equivalents)
+    - Remove invalid characters
+    - Collapse whitespace
+    """
+    if not title:
+        return "Content"
+    cleaned = _ascii_safe(title)
+    cleaned = "".join(" " if ch in INVALID_FS_CHARS else ch for ch in cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
+    return cleaned or "Content"
+
+
+def parse_season_episode(
+    name: str, season_hint: Optional[int] = None
+) -> tuple[Optional[int], Optional[int]]:
     m = RX_SE.search(name) or RX_SE_ALT.search(name)
     if m:
         s, e = m.groups()
@@ -42,7 +59,9 @@ def parse_season_episode(name: str, season_hint: Optional[int] = None) -> Tuple[
     return None, None
 
 
-def target_name(title: str, season: Optional[int], episode: Optional[int], ext: str) -> Optional[str]:
+def target_name(
+    title: str, season: Optional[int], episode: Optional[int], ext: str
+) -> Optional[str]:
     if season is None or episode is None:
         return None
     return f"S{season:02d}E{episode:02d} - {title}{ext}"
@@ -59,7 +78,6 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
     target = path.with_name(new_name)
     if target == path:
         return path
-    # Avoid collisions
     if target.exists():
         base = target.stem
         suffix = target.suffix
@@ -80,23 +98,12 @@ def bulk_rename(root: Path, title: str, season_hint: Optional[int]) -> None:
                 continue
 
 
-def safe_title(title: str) -> str:
-    """
-    Sanitize a title for filesystem use: strip, remove invalid characters, collapse whitespace.
-    """
-    if not title:
-        return "Content"
-    cleaned = "".join(" " if ch in INVALID_FS_CHARS else ch for ch in title)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
-    return cleaned or "Content"
-
-
 def _movie_title_with_year(title: str, year: Optional[int]) -> str:
-    base = safe_title(title)
-    base = re.sub(r"\s*\(\d{4}\)$", "", base).strip()
+    sanitized = safe_title(title)
+    sanitized = re.sub(r"\s*\(\d{4}\)$", "", sanitized).strip()
     if year:
-        base = f"{base} ({year})"
-    return base or "Content"
+        sanitized = f"{sanitized} ({year})"
+    return sanitized or "Content"
 
 
 def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:

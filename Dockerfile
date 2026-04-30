@@ -2,8 +2,6 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PLEXBOT_HOME=/app
-ENV TDL_HOME=/data/tdl
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends unrar ca-certificates curl \
@@ -16,12 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
 
-# Runtime dirs (DB/TDL session). Aligns with TARGET_UID/GID=1000 in code.
-RUN mkdir -p /data/tdl /data && useradd -u 1000 -m plexbot || true && chown -R plexbot:plexbot /data
-
-# Optional: drop a prebuilt `tdl` binary into /usr/local/bin if not bundled.
-ENV PATH="/app/bin:${PATH}"
+# Create plexbot user (UID 1000 for media permissions)
+RUN useradd -u 1000 -m plexbot || true \
+    && mkdir -p /data/tdl \
+    && chown -R plexbot:plexbot /data
 
 USER plexbot
 
-ENTRYPOINT ["python", "-m", "app.telegram.main"]
+ENTRYPOINT ["python", "-m", "app.bot"]

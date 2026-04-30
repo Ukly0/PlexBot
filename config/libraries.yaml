@@ -1,38 +1,29 @@
+# ── Library definitions ──────────────────────────────────────────────
+#
+# Each library has a name (shown in destination picker), a type, and a root path.
+#
+# type: series  → episodes with SxxExx naming, asks for season number
+# type: movie   → standalone file, "Title (Year).ext" naming
+#
+# Add or remove entries as needed. Restart the bot after editing.
+
 libraries:
-  - name: TV
+  - name: "TV Shows"
     type: series
-    root: /media/storage/data/media/tv
+    root: /media/tv
 
-  - name: Anime
-    type: anime
-    root: /media/storage/data/media/anime
+  - name: "Movies"
+    type: movie
+    root: /media/movies
 
-  - name: DocuSeries
-    type: docuseries
-    root: /media/storage/data/media/documentaries_tv
+  - name: "Anime"
+    type: series
+    root: /media/anime
 
-  - name: Documentaries
-    type: documentary
-    root: /media/storage/data/media/documentaries_mov
-
-  - name: Movies
-    type: movies
-    root: /media/storage/data/media/movies
-
-  - name: Movies3D
-    type: movies
-    root: /media/storage/data/media/movies_3d
+# ── Download settings ───────────────────────────────────────────────
 
 download:
+  # tdl download template. {url} and {dir} are filled at runtime.
+  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
   # Optional: dedicated TDL session directory to avoid DB locks with other clients.
-  # tdl_home: /home/ukiyo/.tdl-plexbot
-  # tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
-
-# Optional UI overrides for category buttons.
-ui:
-  categories:
-    series: "📺 Series"
-    anime: "✨ Anime"
-    docuseries: "🎞️ Docuseries"
-    documentary: "🎥 Documentaries"
-    movies: "🎬 Movies"
+  # tdl_home: /data/tdl
