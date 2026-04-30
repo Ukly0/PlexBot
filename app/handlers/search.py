@@ -17,9 +17,6 @@ from app.state import (
     set_state,
 )
 from app.config import load_settings
-from app.services.tmdb import TMDbItem, search as tmdb_search, get_seasons, tmdb_last_error
-from app.state import SERIES_TYPES, STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
-from app.config import load_settings
 
 PAGE_SIZE = 5
 
@@ -128,6 +125,15 @@ def build_library_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+async def _edit_message(query, text: str, reply_markup=None):
+    """Edit text or caption depending on whether the message is a photo."""
+    msg = query.message
+    if msg.photo:
+        await msg.edit_caption(caption=text, reply_markup=reply_markup)
+    else:
+        await msg.edit_text(text, reply_markup=reply_markup)
+
+
 # ── Formatting ───────────────────────────────────────────────────
 
 def _format_item_preview(item: TMDbItem) -> str:
@@ -159,9 +165,9 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = context.user_data.get("tmdb_results") or []
     context.user_data["tmdb_page"] = page
     if not results:
-        await query.edit_message_text("No results. Search again.")
+        await _edit_message(query, "No results. Search again.")
         return
-    await query.edit_message_text(
+    await _edit_message(query, 
         "Results:", reply_markup=build_results_keyboard(results, page)
     )
 
@@ -184,7 +190,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             item = r
             break
     if not item:
-        await query.edit_message_text("Item not found. Search again.")
+        await _edit_message(query, "Item not found. Search again.")
         return
 
     context.user_data["selected_tmdb"] = {
@@ -219,7 +225,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 reply_markup=markup,
             )
         else:
-            await query.message.edit_text(text, reply_markup=markup)
+            await _edit_message(query, text, reply_markup=markup)
         return
 
     # Movie → go to library selection
@@ -234,7 +240,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=markup,
         )
     else:
-        await query.message.edit_text(text, reply_markup=markup)
+        await _edit_message(query, text, reply_markup=markup)
 
 
 async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,7 +252,7 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     val = parts[1]
     if val == "manual":
-        await query.edit_message_text(
+        await _edit_message(query, 
             "Type the season number.",
             reply_markup=InlineKeyboardMarkup(
                 [
@@ -271,7 +277,7 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sel = context.user_data.get("selected_tmdb") or {}
     title = sel.get("title", "Content")
 
-    await query.message.edit_text(
+    await _edit_message(query, 
         f"{title} — Season {season_num}\n\nSelect destination library:",
         reply_markup=build_library_keyboard(),
     )
@@ -293,7 +299,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
     if not library:
-        await query.edit_message_text(f"Library '{lib_name}' not found.")
+        await _edit_message(query, f"Library '{lib_name}' not found.")
         return
 
     sel = context.user_data.get("selected_tmdb") or {}
@@ -313,7 +319,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("state", None)
 
     if pending_link:
-        await query.message.edit_text(
+        await _edit_message(query, 
             f"Destination: {download_dir}\nAdded to queue."
         )
         await queue_download(
@@ -327,7 +333,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending_file or pending_link,
         )
     else:
-        await query.message.edit_text(
+        await _edit_message(query, 
             f"Destination set: {download_dir}\nReady. Send a link or file to download.",
             reply_markup=InlineKeyboardMarkup([[_home_button()]]),
         )
@@ -336,7 +342,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_manual_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
+    await _edit_message(query, 
         "Type the title:",
         reply_markup=InlineKeyboardMarkup(
             [
@@ -358,7 +364,7 @@ async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     from app.state import reset_flow_state as reset
 
     reset(context)
-    await query.message.edit_text(
+    await _edit_message(query, 
         "Flow cancelled.",
         reply_markup=InlineKeyboardMarkup([[_home_button()]]),
     )
