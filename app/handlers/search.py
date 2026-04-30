@@ -334,6 +334,13 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 year,
                 item.get("filename") or item["link"],
             )
+        # For movies, clear destination after queuing so next file starts fresh
+        if library.get("type") not in ("series", "anime"):
+            context.chat_data.pop("download_dir", None)
+            context.chat_data.pop("active_library", None)
+            context.chat_data.pop("season_hint", None)
+            context.user_data.pop("pending_title", None)
+            context.user_data.pop("pending_year", None)
     else:
         await _edit_message(
             query,
