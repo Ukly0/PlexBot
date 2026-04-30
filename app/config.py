@@ -32,7 +32,7 @@ class Library:
 class DownloadCfg:
     tdl_template: str = (
         'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 '
-        '--template "{{{{ .FileName }}}}"'
+        '--template "{{ .FileName }}"'
     )
     tdl_home: str = ""
 

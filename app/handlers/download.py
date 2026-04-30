@@ -305,7 +305,7 @@ async def queue_download(
 ):
     st = load_settings()
     tdl_template = st.download.tdl_template
-    cmd = tdl_template.format(url=link, dir=download_dir)
+    cmd = tdl_template.replace("{url}", link).replace("{dir}", download_dir)
     tdl_home = st.download.tdl_home
     env = os.environ.copy()
     if tdl_home:
