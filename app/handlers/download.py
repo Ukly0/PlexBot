@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Awaitable, Optional
 
 from app.services.downloader import run_download as _run_tdl
-from app.services.naming import safe_title
+from app.services.namer import safe_title
 from app.services.extractor import extract_archives
 from app.state import SERIES_TYPES, MOVIE_TYPES, record_recent
 from app.config import load_settings
