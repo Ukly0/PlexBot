@@ -34,8 +34,7 @@ def reset_flow_state(context) -> None:
         "download_dir",
         "season_hint",
         "active_library",
-        "pending_link",
-        "pending_file",
+        "pending_links",
     ]:
         context.chat_data.pop(key, None)
 

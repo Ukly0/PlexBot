@@ -3,13 +3,16 @@
 import logging
 import os
 import tempfile
+import traceback
 
+from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
+    ContextTypes,
 )
 
 from app.config import load_env_file, load_settings
@@ -152,6 +155,23 @@ def main():
 
     # Store settings in bot_data for runtime access
     app.bot_data["settings"] = st
+
+    async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logging.getLogger().error(
+            "Unhandled error: %s\n%s",
+            context.error,
+            traceback.format_exc(),
+        )
+        if update and hasattr(update, "effective_chat"):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Something went wrong. Use /cancel to reset and try again.",
+                )
+            except Exception:
+                pass
+
+    app.add_error_handler(_error_handler)
 
     # Commands
     app.add_handler(CommandHandler("start", start))

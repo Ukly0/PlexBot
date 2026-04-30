@@ -314,26 +314,29 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update, context, library, title, year, season
     )
 
-    pending_link = context.chat_data.pop("pending_link", None)
-    pending_file = context.chat_data.pop("pending_file", None)
+    pending_items: list = context.chat_data.pop("pending_links", [])
     context.user_data.pop("state", None)
 
-    if pending_link:
-        await _edit_message(query, 
-            f"Destination: {download_dir}\nAdded to queue."
+    if pending_items:
+        count = len(pending_items)
+        await _edit_message(
+            query,
+            f"Destination: {download_dir}\nQueuing {count} item(s)..."
         )
-        await queue_download(
-            query.message,
-            context,
-            pending_link,
-            download_dir,
-            title,
-            season,
-            year,
-            pending_file or pending_link,
-        )
+        for item in pending_items:
+            await queue_download(
+                query.message,
+                context,
+                item["link"],
+                download_dir,
+                title,
+                season,
+                year,
+                item.get("filename") or item["link"],
+            )
     else:
-        await _edit_message(query, 
+        await _edit_message(
+            query,
             f"Destination set: {download_dir}\nReady. Send a link or file to download.",
             reply_markup=InlineKeyboardMarkup([[_home_button()]]),
         )

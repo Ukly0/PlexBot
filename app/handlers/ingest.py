@@ -13,8 +13,6 @@ from app.handlers.search import build_results_keyboard
 from app.handlers.download import queue_download
 from app.state import (
     STATE_SEARCH,
-    STATE_MANUAL_TITLE,
-    STATE_MANUAL_SEASON,
     set_state,
     get_recent_for,
 )
@@ -107,6 +105,16 @@ def _get_message_link(message) -> str:
     return f"https://t.me/c/{base}/{message.message_id}"
 
 
+def _add_pending(context, link: str, filename: Optional[str]) -> bool:
+    """Add to pending queue; returns False if this link is already queued."""
+    items: list = context.chat_data.setdefault("pending_links", [])
+    for item in items:
+        if item.get("link") == link:
+            return False
+    items.append({"link": link, "filename": filename})
+    return True
+
+
 async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if not message:
@@ -144,18 +152,29 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
             context.chat_data.pop("season_hint", None)
+            context.user_data.pop("pending_title", None)
+            context.user_data.pop("pending_year", None)
         return
 
-    # Store link for later use (after destination is chosen)
-    context.chat_data["pending_link"] = link
-    if filename:
-        context.chat_data["pending_file"] = filename
+    # No destination set — store link in pending queue
+    _add_pending(context, link, filename)
+
+    # If auto-detection is already in progress (user is picking metadata),
+    # don't start another search — the new link is safely queued.
+    if context.user_data.get("state") in (STATE_SEARCH, "pending_selection"):
+        await message.reply_text(
+            f"📥 Queued. Complete the current selection first.\n"
+            f"Pending: {len(context.chat_data.get('pending_links', []))} item(s)."
+        )
+        return
+
+    # Mark that we're now doing auto-detection
+    context.user_data["state"] = "pending_selection"
 
     # Try to guess title
     if filename:
         guess = _guess_title(filename)
     elif message.text:
-        # From text link - try extracting something useful
         guess = _guess_title(message.text.split("https://")[0])
     elif message.caption:
         guess = _guess_title(message.caption.split("https://")[0])
@@ -200,7 +219,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             else:
                 err = tmdb_last_error() or ""
                 note = f"\nTMDb: {err}" if err else ""
-                set_state(context.user_data, STATE_SEARCH)
+                context.user_data["state"] = STATE_SEARCH
                 await message.reply_text(
                     f"Detected: {guess}\nNo TMDb results.{note}\n"
                     "Type a title to search manually, or /search.",
@@ -208,7 +227,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     else:
         # No meaningful guess — skip auto-search, ask user directly
         hint = f"(from: {guess})" if guess else ""
-        set_state(context.user_data, STATE_SEARCH)
+        context.user_data["state"] = STATE_SEARCH
         await message.reply_text(
             f"Content received {hint}\nType a title to search, or /search.",
         )
