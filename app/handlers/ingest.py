@@ -184,10 +184,19 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             context.user_data["tmdb_page"] = 0
 
             if results:
-                await message.reply_text(
-                    f"Detected: {guess}\nSelect the matching title:",
-                    reply_markup=build_results_keyboard(results, 0),
-                )
+                first = results[0]
+                markup = build_results_keyboard(results, 0)
+                if first.poster:
+                    await message.reply_photo(
+                        photo=first.poster,
+                        caption=f"Detected: {guess}\nSelect the matching title:",
+                        reply_markup=markup,
+                    )
+                else:
+                    await message.reply_text(
+                        f"Detected: {guess}\nSelect the matching title:",
+                        reply_markup=markup,
+                    )
             else:
                 err = tmdb_last_error() or ""
                 note = f"\nTMDb: {err}" if err else ""

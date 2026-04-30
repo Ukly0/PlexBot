@@ -3,6 +3,20 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.services.tmdb import (
+    TMDbItem,
+    search as tmdb_search,
+    get_seasons,
+    tmdb_last_error,
+)
+from app.state import (
+    SERIES_TYPES,
+    STATE_MANUAL_SEASON,
+    STATE_MANUAL_TITLE,
+    STATE_SEARCH,
+    set_state,
+)
+from app.config import load_settings
 from app.services.tmdb import TMDbItem, search as tmdb_search, get_seasons, tmdb_last_error
 from app.state import SERIES_TYPES, STATE_MANUAL_SEASON, STATE_MANUAL_TITLE, STATE_SEARCH, set_state
 from app.config import load_settings
@@ -184,27 +198,37 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if kind == "tv":
         seasons = get_seasons(item.id)
-        if seasons:
-            await query.message.edit_text(
-                f"{_format_item_preview(item)}\n\nChoose a season:",
-                reply_markup=build_season_keyboard(seasons),
-            )
-            return
-        # Fallback: ask for season manually
-        await query.message.edit_text(
-            f"{_format_item_preview(item)}\n\nType the season number:",
-            reply_markup=InlineKeyboardMarkup(
+        markup = (
+            build_season_keyboard(seasons)
+            if seasons
+            else InlineKeyboardMarkup(
                 [[InlineKeyboardButton("⬅️ Back", callback_data="action|search"), _home_button()]]
-            ),
+            )
         )
-        set_state(context.user_data, STATE_MANUAL_SEASON)
+        text = f"{_format_item_preview(item)}\n\nChoose a season:"
+        if not seasons:
+            set_state(context.user_data, STATE_MANUAL_SEASON)
+            text = f"{_format_item_preview(item)}\n\nType the season number:"
+
+        if item.poster:
+            await query.message.delete()
+            await query.message.reply_photo(
+                photo=item.poster, caption=text, reply_markup=markup
+            )
+        else:
+            await query.message.edit_text(text, reply_markup=markup)
         return
 
     # Movie → go to library selection
-    await query.message.edit_text(
-        f"{_format_item_preview(item)}\n\nSelect destination library:",
-        reply_markup=build_library_keyboard(),
-    )
+    markup = build_library_keyboard()
+    text = f"{_format_item_preview(item)}\n\nSelect destination library:"
+    if item.poster:
+        await query.message.delete()
+        await query.message.reply_photo(
+            photo=item.poster, caption=text, reply_markup=markup
+        )
+    else:
+        await query.message.edit_text(text, reply_markup=markup)
 
 
 async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):

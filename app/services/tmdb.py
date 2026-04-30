@@ -8,6 +8,7 @@ from typing import Optional
 import requests
 
 TMDB_BASE = "https://api.themoviedb.org/3"
+TMDB_IMG_BASE = "https://image.tmdb.org/t/p"
 _tmdb_last_error: Optional[str] = None
 
 
@@ -17,6 +18,7 @@ class TMDbItem:
     title: str
     year: Optional[int]
     kind: str  # "movie" or "tv"
+    poster: Optional[str] = None
     popularity: float = 0.0
     rating: float = 0.0
     overview: Optional[str] = None
@@ -49,6 +51,12 @@ def _extract_year(date_str: Optional[str]) -> Optional[int]:
         return None
 
 
+def _poster_url(path: Optional[str], size: str = "w500") -> Optional[str]:
+    if not path:
+        return None
+    return f"{TMDB_IMG_BASE}/{size}{path}"
+
+
 def search(query: str, limit: int = 10) -> list[TMDbItem]:
     global _tmdb_last_error
     hdrs = _headers()
@@ -79,12 +87,14 @@ def search(query: str, limit: int = 10) -> list[TMDbItem]:
                 popularity = float(d.get("popularity") or 0)
                 rating = float(d.get("vote_average") or 0)
                 overview = d.get("overview")
+                poster = _poster_url(d.get("poster_path"))
                 items.append(
                     TMDbItem(
                         id=int(d["id"]),
                         title=title,
                         year=year,
                         kind=kind,
+                        poster=poster,
                         popularity=popularity,
                         rating=rating,
                         overview=overview,

@@ -75,9 +75,18 @@ async def _text_router(update, context):
         context.user_data["tmdb_page"] = 0
         context.user_data.pop("state", None)
         if results:
-            await update.message.reply_text(
-                "Results:", reply_markup=build_results_keyboard(results, 0)
-            )
+            first = results[0]
+            markup = build_results_keyboard(results, 0)
+            if first.poster:
+                await update.message.reply_photo(
+                    photo=first.poster,
+                    caption="Results:",
+                    reply_markup=markup,
+                )
+            else:
+                await update.message.reply_text(
+                    "Results:", reply_markup=markup
+                )
         else:
             err = tmdb_last_error()
             note = f" TMDb: {err}" if err else ""
