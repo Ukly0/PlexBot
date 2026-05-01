@@ -105,13 +105,13 @@ def _get_message_link(message) -> str:
     return f"https://t.me/c/{base}/{message.message_id}"
 
 
-def _add_pending(context, link: str, filename: Optional[str]) -> bool:
+def _add_pending(context, link: str, filename: Optional[str], is_text: bool = False) -> bool:
     """Add to pending queue; returns False if this link is already queued."""
     items: list = context.chat_data.setdefault("pending_links", [])
     for item in items:
         if item.get("link") == link:
             return False
-    items.append({"link": link, "filename": filename})
+    items.append({"link": link, "filename": filename, "is_text": is_text})
     return True
 
 
@@ -123,9 +123,11 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     # Determine link and filename
     link = None
     filename = None
+    is_text_link = False
 
     if message.text and "https://t.me" in message.text:
         link = message.text.strip()
+        is_text_link = True
     elif any([message.document, message.video, message.audio, message.photo]):
         link = _get_message_link(message)
         if message.document:
@@ -154,7 +156,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             display_name = filename or link
             await queue_download(
                 message, context, link, download_dir,
-                title, season, year, display_name,
+                title, season, year, display_name, use_group=is_text_link,
             )
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
@@ -167,7 +169,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             return
 
         # For series: add to pending and ask user whether to continue batch or start new
-        _add_pending(context, link, filename)
+        _add_pending(context, link, filename, is_text=is_text_link)
         lib_name = active_lib.get("name", "")
         season_label = f" S{season:02d}" if season else ""
         try:
@@ -191,7 +193,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
     # No destination set — store link in pending queue
-    _add_pending(context, link, filename)
+    _add_pending(context, link, filename, is_text=is_text_link)
 
     # If auto-detection is already in progress (user is picking metadata),
     # don't start another search — the new link is safely queued.

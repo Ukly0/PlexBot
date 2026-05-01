@@ -334,6 +334,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Destination: {download_dir}\nQueuing {count} item(s)..."
         )
         for item in pending_items:
+            is_text = item.get("is_text", False)
             await queue_download(
                 query.message,
                 context,
@@ -343,6 +344,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 season,
                 year,
                 item.get("filename") or item["link"],
+                use_group=is_text,
             )
         # For movies, clear destination after queuing so next file starts fresh
         if library.get("type") not in ("series", "anime"):

@@ -319,11 +319,14 @@ async def queue_download(
     season_hint: Optional[int],
     year: Optional[int] = None,
     display_name: Optional[str] = None,
+    use_group: bool = False,
 ):
     st = load_settings()
     tdl_template = st.download.tdl_template
     cmd = tdl_template.replace("{url}", link).replace("{dir}", download_dir)
     tdl_home = st.download.tdl_home
+    if use_group and "--group" not in cmd:
+        cmd = f"{cmd} --group"
     env = os.environ.copy()
     if tdl_home:
         env["TDL_HOME"] = tdl_home

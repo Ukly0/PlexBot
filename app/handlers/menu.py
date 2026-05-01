@@ -348,10 +348,12 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.message.edit_text(f"Queuing {len(pending)} item(s) for '{title}'...")
         for item in pending:
+            is_text = item.get("is_text", False)
             await queue_download(
                 query.message, context, item["link"],
                 download_dir, title, season, year,
                 item.get("filename") or item["link"],
+                use_group=is_text,
             )
         context.chat_data["pending_links"] = []
         active_lib = context.chat_data.get("active_library") or {}
