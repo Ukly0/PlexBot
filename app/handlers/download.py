@@ -290,13 +290,16 @@ def _process_directory(
     )
     extract_archives(root)
     if lib_type in SERIES_TYPES:
-        logging.info("_process_directory: calling bulk_rename (series)")
+        logging.info("_process_directory: calling bulk_rename (series) for %s", directory)
         bulk_rename(root, title, season_hint)
-    elif lib_type in MOVIE_TYPES or lib_type is None:
-        logging.info("_process_directory: calling rename_movie_files (movie)")
+    elif lib_type in MOVIE_TYPES:
+        logging.info("_process_directory: calling rename_movie_files (movie) for %s", directory)
         rename_movie_files(root, title, year)
+    elif lib_type is None:
+        logging.warning("_process_directory: lib_type is None, inferring from season_hint (season=%s). Treating as series.", season_hint)
+        bulk_rename(root, title, season_hint)
     else:
-        logging.warning("_process_directory: unknown lib_type=%s, defaulting to series", lib_type)
+        logging.warning("_process_directory: unknown lib_type=%s, treating as series", lib_type)
         bulk_rename(root, title, season_hint)
     files_after = [str(p) for p in root.rglob("*") if p.is_file()]
     renamed = set(files_after) - set(files_before)

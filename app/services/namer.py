@@ -4,6 +4,7 @@ CRITICAL: Every filename/folder written to disk MUST go through these helpers.
 Plex requires ASCII-only names: no accents, no ñ, no special chars.
 """
 
+import logging
 import re
 import unicodedata
 from pathlib import Path
@@ -72,9 +73,15 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
     ext = path.suffix.lower()
     if ext not in VIDEO_EXT:
         return path
-    new_name = target_name(title, season, episode, ext)
-    if not new_name:
+
+    if season is not None and episode is not None:
+        new_name = f"S{season:02d}E{episode:02d} - {title}{ext}"
+    elif season_hint is not None and episode is not None:
+        new_name = f"S{season_hint:02d}E{episode:02d} - {title}{ext}"
+    else:
+        logging.warning("rename_video: cannot determine season/episode for %s (season=%s, episode=%s, hint=%s), keeping original", path.name, season, episode, season_hint)
         return path
+
     target = path.with_name(new_name)
     if target == path:
         return path
@@ -83,19 +90,25 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
         suffix = target.suffix
         n = 1
         while target.exists():
-            target = target.with_name(f"{base}-dup{n}{suffix}")
+            target = path.with_name(f"{base}-dup{n}{suffix}")
             n += 1
+    logging.info("rename_video: %s -> %s", path.name, target.name)
     path.rename(target)
     return target
 
 
 def bulk_rename(root: Path, title: str, season_hint: Optional[int]) -> None:
-    for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in VIDEO_EXT:
-            try:
-                rename_video(p, title, season_hint)
-            except Exception:
-                continue
+    logging.info("bulk_rename: root=%s title=%s season_hint=%s", root, title, season_hint)
+    video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
+    logging.info("bulk_rename: found %d video files", len(video_files))
+    for p in video_files:
+        original = p.name
+        try:
+            result = rename_video(p, title, season_hint)
+            if result == p:
+                logging.info("bulk_rename: skipped %s (no rename needed)", original)
+        except Exception as e:
+            logging.error("bulk_rename: failed to rename %s: %s", original, e)
 
 
 def _movie_title_with_year(title: str, year: Optional[int]) -> str:
@@ -108,19 +121,24 @@ def _movie_title_with_year(title: str, year: Optional[int]) -> str:
 
 def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:
     target_base = _movie_title_with_year(title, year)
-    for p in root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in VIDEO_EXT:
-            try:
-                target = p.with_name(f"{target_base}{p.suffix.lower()}")
-                if target == p:
-                    continue
-                if target.exists():
-                    base = target.stem
-                    suffix = target.suffix
-                    n = 1
-                    while target.exists():
-                        target = target.with_name(f"{base}-dup{n}{suffix}")
-                        n += 1
-                p.rename(target)
-            except Exception:
+    logging.info("rename_movie_files: root=%s title=%s year=%s target_base=%s", root, title, year, target_base)
+    video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
+    logging.info("rename_movie_files: found %d video files", len(video_files))
+    for p in video_files:
+        original = p.name
+        try:
+            target = p.with_name(f"{target_base}{p.suffix.lower()}")
+            if target == p:
+                logging.info("rename_movie_files: skipped %s (already named)", original)
                 continue
+            if target.exists():
+                base = target.stem
+                suffix = target.suffix
+                n = 1
+                while target.exists():
+                    target = p.with_name(f"{base}-dup{n}{suffix}")
+                    n += 1
+            logging.info("rename_movie_files: %s -> %s", original, target.name)
+            p.rename(target)
+        except Exception as e:
+            logging.error("rename_movie_files: failed to rename %s: %s", original, e)
