@@ -490,3 +490,24 @@ async def set_destination(
     context.chat_data["active_library"] = library
     context.chat_data["selected_type"] = library.get("type", "movie")
     return download_dir
+
+
+def find_existing_library(
+    title: str,
+    year: Optional[int],
+    libraries: list,
+    lib_types: set = SERIES_TYPES,
+) -> Optional[dict]:
+    """Check if a title+year folder already exists under a series-type library root.
+    Returns the library dict if found, None otherwise."""
+    base_title = title or "Content"
+    if year:
+        base_title = f"{base_title} ({year})"
+    folder_name = safe_title(base_title)
+    for lib in libraries:
+        if lib.type not in lib_types:
+            continue
+        candidate = os.path.join(lib.root, folder_name)
+        if os.path.isdir(candidate):
+            return {"name": lib.name, "root": lib.root, "type": lib.type}
+    return None

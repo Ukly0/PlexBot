@@ -28,6 +28,7 @@ def reset_flow_state(context) -> None:
         "tmdb_results",
         "tmdb_page",
         "selected_tmdb",
+        "auto_library",
     ]:
         context.user_data.pop(key, None)
     for key in [

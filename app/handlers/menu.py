@@ -209,14 +209,24 @@ async def show_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = ["🆕 Recently added", ""]
-    for e in entries:
+    buttons: list[list[InlineKeyboardButton]] = []
+    for i, e in enumerate(entries):
         lib_name = (e.get("library") or {}).get("name", "")
         season = e.get("season")
-        detail = f" - Season {season}" if season else ""
+        detail = f" S{season:02d}" if season else ""
         dest = f" · {lib_name}" if lib_name else ""
-        lines.append(f"- {e.get('title', '?')}{detail}{dest}")
+        lines.append(f"{i + 1}. {e.get('title', '?')}{detail}{dest}")
+        lib_type = (e.get("library") or {}).get("type", "")
+        if lib_type in ("series", "anime") or season is not None:
+            buttons.append([
+                InlineKeyboardButton(
+                    f"📥 {e.get('title', '?')}{detail}",
+                    callback_data=f"action|continue|{i}",
+                )
+            ])
 
-    await _reply_or_edit(update, "\n".join(lines), _home_button())
+    buttons.append([InlineKeyboardButton("🏠 Main menu", callback_data="action|home")])
+    await _reply_or_edit(update, "\n".join(lines), InlineKeyboardMarkup(buttons))
 
 
 async def clean_tmp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -432,5 +442,45 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text(
                 f"New search {hint}\nType a title to search.",
             )
+    elif action.startswith("continue"):
+        from app.config import load_settings
+        from app.handlers.download import set_destination
+
+        try:
+            idx = int((query.data or "").split("|")[2])
+        except (ValueError, IndexError):
+            await query.message.reply_text("Invalid selection.")
+            return
+        entries = context.bot_data.get("recent_destinations", {}).get(update.effective_chat.id, [])
+        if idx < 0 or idx >= len(entries):
+            await query.message.reply_text("Selection not found.")
+            return
+        entry = entries[idx]
+        entry_title = entry.get("title", "Content")
+        entry_lib = entry.get("library") or {}
+        entry_season = entry.get("season")
+        entry_year = entry.get("year")
+
+        if not entry_lib:
+            await query.message.reply_text("Library info not available for this entry.")
+            return
+
+        download_dir = await set_destination(
+            update, context, entry_lib, entry_title, entry_year, entry_season
+        )
+
+        full_title = entry_title
+        if entry_year:
+            full_title = f"{entry_title} ({entry_year})"
+        context.user_data["pending_title"] = full_title
+        context.user_data["pending_year"] = entry_year
+        if entry_season:
+            context.user_data["pending_season"] = entry_season
+
+        season_label = f" S{entry_season:02d}" if entry_season else ""
+        await query.message.reply_text(
+            f"📥 Ready: {entry_title}{season_label}\n{download_dir}\n\nSend a link or file to download.",
+            reply_markup=_home_button(),
+        )
     else:
         await query.message.reply_text("Unknown action.")

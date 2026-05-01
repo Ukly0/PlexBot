@@ -203,18 +203,67 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["pending_year"] = item.year
 
     if kind == "tv":
+        # Auto-detect if this show already has a folder in a series library
+        from app.config import load_settings
+        from app.handlers.download import find_existing_library
+
+        st = load_settings()
+        existing_lib = find_existing_library(item.title, item.year, st.libraries)
+
         seasons = get_seasons(item.id)
-        markup = (
-            build_season_keyboard(seasons)
-            if seasons
-            else InlineKeyboardMarkup(
-                [[InlineKeyboardButton("⬅️ Back", callback_data="action|search"), _home_button()]]
+        season_markup_buttons = []
+
+        if existing_lib:
+            # Store auto-detected library for handle_season to use
+            context.user_data["auto_library"] = existing_lib
+            # Show which library was auto-detected, with a "Change" option
+            season_markup_buttons.append(
+                [InlineKeyboardButton(
+                    f"📁 {existing_lib['name']}",
+                    callback_data=f"autolib|{existing_lib['name']}",
+                )]
             )
+        else:
+            context.user_data.pop("auto_library", None)
+
+        if seasons:
+            row: list[InlineKeyboardButton] = []
+            for s in seasons[:24]:
+                row.append(
+                    InlineKeyboardButton(f"Season {s.season_number}", callback_data=f"season|{s.season_number}")
+                )
+                if len(row) == 2:
+                    season_markup_buttons.append(row)
+                    row = []
+            if row:
+                season_markup_buttons.append(row)
+
+        season_markup_buttons.append(
+            [InlineKeyboardButton("🔢 Other season", callback_data="season|manual")]
         )
+        if existing_lib:
+            season_markup_buttons.append(
+                [InlineKeyboardButton("📂 Change library", callback_data="action|search")]
+            )
+        season_markup_buttons.append(
+            [
+                InlineKeyboardButton("⬅️ Back", callback_data="action|search"),
+                _home_button(),
+            ]
+        )
+        season_markup_buttons.append(
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")]
+        )
+        markup = InlineKeyboardMarkup(season_markup_buttons)
+
         text = f"{_format_item_preview(item)}\n\nChoose a season:"
+        if existing_lib:
+            text += f"\n📁 Auto-detected: {existing_lib['name']}"
         if not seasons:
             set_state(context.user_data, STATE_MANUAL_SEASON)
             text = f"{_format_item_preview(item)}\n\nType the season number:"
+            if existing_lib:
+                text += f"\n📁 Auto-detected: {existing_lib['name']}"
 
         if item.poster:
             await query.message.delete()
@@ -228,7 +277,48 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _edit_message(query, text, reply_markup=markup)
         return
 
-    # Movie → go to library selection
+    # Movie → auto-detect library or go to library selection
+    from app.config import load_settings
+    from app.handlers.download import find_existing_library
+    from app.state import MOVIE_TYPES
+
+    st = load_settings()
+    existing_lib = find_existing_library(item.title, item.year, st.libraries, MOVIE_TYPES)
+
+    if existing_lib:
+        from app.handlers.download import set_destination, queue_download
+
+        lib_dict = {"name": existing_lib["name"], "root": existing_lib["root"], "type": existing_lib["type"]}
+        context.user_data.pop("state", None)
+        full_title = item.title
+        if item.year:
+            full_title = f"{item.title} ({item.year})"
+        context.user_data["pending_title"] = full_title
+
+        download_dir = await set_destination(update, context, lib_dict, item.title, item.year, None)
+
+        pending_items: list = context.chat_data.pop("pending_links", [])
+        if pending_items:
+            await _edit_message(query, f"📁 Auto: {existing_lib['name']}\nQueuing {len(pending_items)} item(s)...")
+            for pi in pending_items:
+                await queue_download(
+                    query.message, context, pi["link"], download_dir,
+                    full_title, None, item.year, pi.get("filename") or pi["link"],
+                    use_group=pi.get("is_text", False),
+                )
+            context.chat_data.pop("download_dir", None)
+            context.chat_data.pop("active_library", None)
+            context.chat_data.pop("season_hint", None)
+            context.chat_data.pop("selected_type", None)
+            context.user_data.pop("pending_title", None)
+            context.user_data.pop("pending_year", None)
+            context.user_data.pop("pending_season", None)
+            context.user_data.pop("selected_tmdb", None)
+        else:
+            markup = InlineKeyboardMarkup([[_home_button()]])
+            await _edit_message(query, f"📁 Auto: {existing_lib['name']}\n{download_dir}\n\nSend a link or file.", reply_markup=markup)
+        return
+
     markup = build_library_keyboard()
     text = f"{_format_item_preview(item)}\n\nSelect destination library:"
     if item.poster:
@@ -275,7 +365,40 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["pending_season"] = season_num
     sel = context.user_data.get("selected_tmdb") or {}
-    title = sel.get("title", "Content")
+    title = sel.get("title") or context.user_data.get("pending_title", "Content")
+    year = sel.get("year") or context.user_data.get("pending_year")
+    kind = sel.get("kind", "movie")
+
+    # If a series auto-library was detected, skip library selection
+    auto_lib = context.user_data.pop("auto_library", None)
+    if auto_lib:
+        from app.handlers.download import set_destination, queue_download
+
+        full_title = title
+        if year:
+            full_title = f"{title} ({year})"
+        context.user_data["pending_title"] = full_title
+        if kind != "tv":
+            context.user_data.pop("pending_season", None)
+
+        download_dir = await set_destination(update, context, auto_lib, title, year, season_num)
+
+        pending_items: list = context.chat_data.pop("pending_links", [])
+        context.user_data.pop("state", None)
+
+        if pending_items:
+            await _edit_message(query, f"📁 {auto_lib['name']} — Season {season_num:02d}\nQueuing {len(pending_items)} item(s)...")
+            for item in pending_items:
+                await queue_download(
+                    query.message, context, item["link"],
+                    download_dir, full_title, season_num, year,
+                    item.get("filename") or item["link"],
+                    use_group=item.get("is_text", False),
+                )
+        else:
+            markup = InlineKeyboardMarkup([[_home_button()]])
+            await _edit_message(query, f"📁 {auto_lib['name']} — Season {season_num:02d}\n{download_dir}\n\nSend a link or file.", reply_markup=markup)
+        return
 
     await _edit_message(query, 
         f"{title} — Season {season_num}\n\nSelect destination library:",
@@ -381,6 +504,18 @@ async def handle_manual_entry(update: Update, context: ContextTypes.DEFAULT_TYPE
         ),
     )
     set_state(context.user_data, STATE_MANUAL_TITLE)
+
+
+async def handle_autolib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the auto-detected library button — clears it so user picks manually."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop("auto_library", None)
+    sel = context.user_data.get("selected_tmdb") or {}
+    title = sel.get("title", "Content")
+    markup = build_library_keyboard()
+    text = f"{title}\n\nSelect destination library:"
+    await _edit_message(query, text, reply_markup=markup)
 
 
 async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):

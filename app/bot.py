@@ -32,6 +32,7 @@ from app.handlers.search import (
     handle_page,
     handle_tmdb_select,
     handle_season,
+    handle_autolib,
     handle_library,
     handle_manual_entry,
     handle_cancel_flow,
@@ -191,6 +192,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_cancel_flow, pattern=r"^cancel\|"))
     app.add_handler(CallbackQueryHandler(handle_manual_entry, pattern=r"^manual\|start"))
     app.add_handler(CallbackQueryHandler(queue_cancel, pattern=r"^cancel_task\|"))
+    app.add_handler(CallbackQueryHandler(handle_autolib, pattern=r"^autolib\|"))
 
     # Message handlers
     app.add_handler(
