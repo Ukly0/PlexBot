@@ -10,9 +10,10 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
-RX_SE = re.compile(r"S?(\d{1,2})[xEex](\d{1,3})", re.I)
-RX_SE_ALT = re.compile(r"S(\d{1,2})E(\d{1,3})", re.I)
-RX_E_ONLY = re.compile(r"E(\d{1,3})", re.I)
+RX_SE = re.compile(r"S?(\d{1,2})[xEex](\d{1,3})(?:[Ee\-](\d{1,3}))?", re.I)
+RX_E_ONLY = re.compile(r"(?<![A-Za-z])E(\d{1,3})(?!\d)", re.I)
+RX_YEAR_GUARD = re.compile(r"(19\d{2}|20\d{2})")
+_RES_HEIGHTS = {"480", "576", "720", "108", "360"}
 RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")
 
 VIDEO_EXT = {
@@ -46,17 +47,18 @@ def safe_title(title: str) -> str:
 def parse_season_episode(
     name: str, season_hint: Optional[int] = None
 ) -> tuple[Optional[int], Optional[int]]:
-    m = RX_SE.search(name) or RX_SE_ALT.search(name)
+    m = RX_SE.search(name)
     if m:
-        s, e = m.groups()
-        return int(s), int(e)
+        s, e = int(m.group(1)), int(m.group(2))
+        return s, e
     m = RX_E_ONLY.search(name)
     if m and season_hint is not None:
         return season_hint, int(m.group(1))
     m = RX_THREE.search(name)
     if m:
-        s, e = m.groups()
-        return int(s), int(e)
+        s, e = int(m.group(1)), int(m.group(2))
+        if f"{s}{e}" not in _RES_HEIGHTS:
+            return s, e
     return None, None
 
 

@@ -88,7 +88,18 @@ All file and folder names must be safe for Plex. The `app/services/namer.py` mod
 When parsing episode numbers from filenames, support these patterns (all case-insensitive):
 - `S01E02`, `s01e02`, `1x02`, `1X02` → season=1, episode=2
 - `E05`, `e05` → episode=5 (requires season hint)
-- `101` (three digits) → season=1, episode=1
+- `101` (three digits) → season=1, episode=1 (excludes resolution-like numbers: 720, 108, etc.)
+
+### Filename Parsing (Auto-Detection)
+
+`app/handlers/ingest.py::_parse_filename()` tokenizes the original filename and classifies each token:
+- **SxxExx tokens** (`S01E02`, `1x03`, `S02`) → extracted as `season`/`episode` metadata, removed from title
+- **Year tokens** (`(2024)`, `2019`) → extracted as `year` metadata, removed from title
+- **Resolution tokens** (`1080p`, `720p`, `2160p`, `4k`) → removed from title
+- **Noise tokens** (codec, source, group: `x264`, `WEB-DL`, `AMZN`, etc.) → removed from title
+- Remaining tokens → joined as the clean title sent to TMDb
+
+Extracted `season` and `year` are stored as `pending_season`/`pending_year` and `season_hint` in context, so the bot can pre-fill the season picker when the TMDb result is selected.
 
 ## User Flow
 
@@ -212,7 +223,7 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 
 1. **`pkill -u` is Linux-specific** — `kill_stale_tdl()` in downloader won't work on macOS. Fine in Docker, but document in code.
 2. **Hardcoded UID/GID** — `TARGET_UID=1000`, `TARGET_GID=1000`. Should be configurable.
-3. **`safe_title` does not normalize Unicode** — currently removes `<>:"/\|?*` but does not strip accents or replace `ñ` with `n`. This is mandatory for Plex compatibility. Fix in `app/services/namer.py` before adding new naming features.
+3. ~~**`safe_title` does not normalize Unicode**~~ — Fixed. `_ascii_safe()` now applies NFKD normalization before stripping non-ASCII. Accents and `ñ` → `n` are handled correctly.
 4. **Group must be public** — `tdl` cannot resolve download links from private groups. The README and setup docs must make this clear.
 5. **AGENTS.md was in `.gitignore`** — removed. Commit this file.
 6. **4 placeholder files were removed** — `browse.py`, `create.py`, `season.py`, `selector.py` were empty stubs. Do not recreate them without implementing the feature.
