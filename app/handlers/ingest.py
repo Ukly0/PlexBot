@@ -235,12 +235,16 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
                 "title": recent["title"],
                 "year": recent.get("year"),
             }
+            lib_kb = build_library_keyboard()
+            rows = lib_kb.inline_keyboard + [
+                [InlineKeyboardButton("✍️ Search another title", callback_data="action|search")]
+            ]
             await message.reply_text(
                 f"Detected: {guess}\n\n"
                 f"Continue '{recent['title']}' "
                 + (f"Season {recent['season']}? " if recent.get("season") else "")
                 + "Pick a library:",
-                reply_markup=build_library_keyboard(),
+                reply_markup=InlineKeyboardMarkup(rows),
             )
         else:
             # Auto-search TMDb
