@@ -345,7 +345,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "clean_tmp":
         await clean_tmp(update, context)
     elif action == "continue_batch":
-        # Process all pending links to the current destination
+        context.chat_data.pop("batch_prompted", None)
         pending: list = context.chat_data.get("pending_links", [])
         download_dir = context.chat_data.get("download_dir")
         title = context.user_data.get("pending_title") or "Content"
@@ -377,6 +377,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_season", None)
             context.user_data.pop("selected_tmdb", None)
     elif action == "new_search":
+        context.chat_data.pop("batch_prompted", None)
         # Keep the pending links, clear destination, trigger auto-detect on them
         pending: list = context.chat_data.get("pending_links", [])
         context.chat_data.pop("download_dir", None)

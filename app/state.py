@@ -37,6 +37,7 @@ def reset_flow_state(context) -> None:
         "active_library",
         "selected_type",
         "pending_links",
+        "batch_prompted",
     ]:
         context.chat_data.pop(key, None)
 

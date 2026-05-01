@@ -168,14 +168,27 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             context.user_data.pop("selected_tmdb", None)
             return
 
-        # For series: add to pending and ask user whether to continue batch or start new
+        # For series: add to pending
         _add_pending(context, link, filename, is_text=is_text_link)
+        pending_count = len(context.chat_data.get("pending_links", []))
         lib_name = active_lib.get("name", "")
         season_label = f" S{season:02d}" if season else ""
+
+        # If we already showed the batch prompt, just confirm silently
+        if context.chat_data.get("batch_prompted"):
+            try:
+                await message.reply_text(
+                    f"✅ Added to batch ({pending_count} pending) → {lib_name}",
+                )
+            except Exception as e:
+                logging.warning("Could not send batch confirm: %s", e)
+            return
+
+        context.chat_data["batch_prompted"] = True
         try:
             await message.reply_text(
                 f"📥 Added to batch: {title}{season_label} → {lib_name}\n"
-                f"Pending: {len(context.chat_data.get('pending_links', []))} item(s).\n\n"
+                f"Pending: {pending_count} item(s).\n\n"
                 f"Continue with this series or start a new search?",
                 reply_markup=InlineKeyboardMarkup([
                     [
