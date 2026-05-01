@@ -3,6 +3,7 @@
 import os
 import re
 import logging
+import asyncio
 from typing import Optional
 from dataclasses import dataclass
 
@@ -337,6 +338,49 @@ def _add_pending(context, link: str, filename: Optional[str], is_text: bool = Fa
     return True
 
 
+async def _safe_reply(message, text: str, reply_markup=None, max_retries: int = 3):
+    """Send a reply with RetryAfter/TimedOut handling."""
+    from telegram.error import RetryAfter, TimedOut
+    for attempt in range(max_retries):
+        try:
+            return await message.reply_text(text, reply_markup=reply_markup)
+        except RetryAfter as e:
+            wait = getattr(e, "retry_after", 30) or 30
+            logging.warning("Flood control: retrying reply in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
+            await asyncio.sleep(wait)
+        except TimedOut:
+            logging.warning("Timed out sending reply (attempt %s/%s)", attempt + 1, max_retries)
+            await asyncio.sleep(2)
+        except Exception as e:
+            err_str = str(e)
+            if "not modified" in err_str.lower():
+                return None
+            logging.warning("Reply failed: %s", e)
+            return None
+    logging.error("Reply failed after %s retries", max_retries)
+    return None
+
+
+async def _safe_reply_photo(message, photo, caption: str, reply_markup=None, max_retries: int = 3):
+    """Send a photo reply with RetryAfter/TimedOut handling."""
+    from telegram.error import RetryAfter, TimedOut
+    for attempt in range(max_retries):
+        try:
+            return await message.reply_photo(photo=photo, caption=caption, reply_markup=reply_markup)
+        except RetryAfter as e:
+            wait = getattr(e, "retry_after", 30) or 30
+            logging.warning("Flood control: retrying photo in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
+            await asyncio.sleep(wait)
+        except TimedOut:
+            logging.warning("Timed out sending photo (attempt %s/%s)", attempt + 1, max_retries)
+            await asyncio.sleep(2)
+        except Exception as e:
+            logging.warning("Photo reply failed: %s", e)
+            return None
+    logging.error("Photo reply failed after %s retries", max_retries)
+    return None
+
+
 async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if not message:
@@ -398,33 +442,26 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
 
         # If we already showed the batch prompt, just confirm silently
         if context.chat_data.get("batch_prompted"):
-            try:
-                await message.reply_text(
-                    f"✅ Added to batch ({pending_count} pending) → {lib_name}",
-                )
-            except Exception as e:
-                logging.warning("Could not send batch confirm: %s", e)
+            await _safe_reply(message, f"✅ Added to batch ({pending_count} pending) → {lib_name}")
             return
 
         context.chat_data["batch_prompted"] = True
-        try:
-            await message.reply_text(
-                f"📥 Added to batch: {title}{season_label} → {lib_name}\n"
-                f"Pending: {pending_count} item(s).\n\n"
-                f"Continue with this series or start a new search?",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "✅ Continue batch", callback_data="action|continue_batch"
-                        ),
-                        InlineKeyboardButton(
-                            "🔍 New search", callback_data="action|new_search"
-                        ),
-                    ]
-                ]),
-            )
-        except Exception as e:
-            logging.warning("Could not send batch message: %s", e)
+        await _safe_reply(
+            message,
+            f"📥 Added to batch: {title}{season_label} → {lib_name}\n"
+            f"Pending: {pending_count} item(s).\n\n"
+            f"Continue with this series or start a new search?",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "✅ Continue batch", callback_data="action|continue_batch"
+                    ),
+                    InlineKeyboardButton(
+                        "🔍 New search", callback_data="action|new_search"
+                    ),
+                ]
+            ]),
+        )
         return
 
     # No destination set — store link in pending queue
@@ -433,9 +470,10 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     # If auto-detection is already in progress (user is picking metadata),
     # don't start another search — the new link is safely queued.
     if context.user_data.get("state") in (STATE_SEARCH, "pending_selection"):
-        await message.reply_text(
+        await _safe_reply(
+            message,
             f"📥 Queued. Complete the current selection first.\n"
-            f"Pending: {len(context.chat_data.get('pending_links', []))} item(s)."
+            f"Pending: {len(context.chat_data.get('pending_links', []))} item(s).",
         )
         return
 
@@ -478,7 +516,8 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             rows = lib_kb.inline_keyboard + [
                 [InlineKeyboardButton("✍️ Search another title", callback_data="action|search")]
             ]
-            await message.reply_text(
+            await _safe_reply(
+                message,
                 f"Detected: {guess}\n\n"
                 f"Continue '{recent['title']}' "
                 + (f"Season {recent['season']}? " if recent.get("season") else "")
@@ -506,21 +545,17 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
                 caption_text = f"Detected: {detected_info}\nSelect the matching title:"
 
                 if first.poster:
-                    await message.reply_photo(
-                        photo=first.poster,
-                        caption=caption_text,
-                        reply_markup=markup,
+                    await _safe_reply_photo(
+                        message, first.poster, caption_text, reply_markup=markup,
                     )
                 else:
-                    await message.reply_text(
-                        caption_text,
-                        reply_markup=markup,
-                    )
+                    await _safe_reply(message, caption_text, reply_markup=markup)
             else:
                 err = tmdb_last_error() or ""
                 note = f"\nTMDb: {err}" if err else ""
                 context.user_data["state"] = STATE_SEARCH
-                await message.reply_text(
+                await _safe_reply(
+                    message,
                     f"Detected: {guess}\nNo TMDb results.{note}\n"
                     "Type a title to search manually, or /search.",
                 )
@@ -528,6 +563,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         # No meaningful guess — skip auto-search, ask user directly
         hint = f"(from: {guess})" if guess else ""
         context.user_data["state"] = STATE_SEARCH
-        await message.reply_text(
+        await _safe_reply(
+            message,
             f"Content received {hint}\nType a title to search, or /search.",
         )

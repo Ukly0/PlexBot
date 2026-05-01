@@ -16,7 +16,7 @@ from app.services.namer import safe_title
 from app.services.extractor import extract_archives
 from app.state import SERIES_TYPES, MOVIE_TYPES, record_recent
 from app.config import load_settings
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, TimedOut
 
 TARGET_UID = 1000
 TARGET_GID = 1000
@@ -349,7 +349,7 @@ async def queue_download(
 
     status_holder: dict = {"msg": None}
 
-    async def _safe_send(text: str, max_retries: int = 5):
+    async def _safe_send(text: str, max_retries: int = 3):
         for attempt in range(max_retries):
             try:
                 return await message.reply_text(text)
@@ -357,7 +357,13 @@ async def queue_download(
                 wait = getattr(e, "retry_after", 30) or 30
                 logging.warning("Flood control: retrying send in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
                 await asyncio.sleep(wait)
+            except TimedOut:
+                logging.warning("Timed out sending message (attempt %s/%s)", attempt + 1, max_retries)
+                await asyncio.sleep(2)
             except Exception as e:
+                err_str = str(e)
+                if "not modified" in err_str.lower():
+                    return None
                 logging.warning("Status send failed: %s", e)
                 return None
         logging.error("Status send failed after %s retries", max_retries)
@@ -374,7 +380,13 @@ async def queue_download(
                 wait = getattr(e, "retry_after", 30) or 30
                 logging.warning("Flood control: retrying edit in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
                 await asyncio.sleep(wait)
+            except TimedOut:
+                logging.warning("Timed out editing message (attempt %s/%s)", attempt + 1, max_retries)
+                await asyncio.sleep(2)
             except Exception as e:
+                err_str = str(e)
+                if "not modified" in err_str.lower():
+                    return True
                 logging.warning("Status edit failed: %s", e)
                 return False
         logging.error("Status edit failed after %s retries", max_retries)
