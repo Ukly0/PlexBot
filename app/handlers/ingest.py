@@ -5,7 +5,7 @@ import re
 import logging
 from typing import Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.services.tmdb import search as tmdb_search, tmdb_last_error
@@ -138,32 +138,32 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     if not link:
         return
 
-    # If destination is already set, confirm or start fresh
+    # If destination is already set, auto-queue to the active destination
     download_dir = context.chat_data.get("download_dir")
     if download_dir:
         title = context.user_data.get("pending_title") or "Content"
         season = context.chat_data.get("season_hint")
         year = context.user_data.get("pending_year")
         active_lib = context.chat_data.get("active_library") or {}
-        lib_name = active_lib.get("name", "")
 
-        _add_pending(context, link, filename)
-        await message.reply_text(
-            f"Currently downloading: {title}"
-            + (f" S{season:02d}" if season else "")
-            + (f" → {lib_name}" if lib_name else "")
-            + "\n\nQueue as part of this batch or start a new search?",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "Continue batch", callback_data="action|continue_batch"
-                    ),
-                    InlineKeyboardButton(
-                        "New search", callback_data="action|new_search"
-                    ),
-                ]
-            ]),
+        from app.handlers.download import queue_download
+
+        display_name = filename or link
+        await queue_download(
+            message, context, link, download_dir,
+            title, season, year, display_name,
         )
+
+        # For movies, clear destination after queuing so next file starts fresh
+        if active_lib.get("type") not in ("series", "anime"):
+            context.chat_data.pop("download_dir", None)
+            context.chat_data.pop("active_library", None)
+            context.chat_data.pop("season_hint", None)
+            context.chat_data.pop("selected_type", None)
+            context.user_data.pop("pending_title", None)
+            context.user_data.pop("pending_year", None)
+            context.user_data.pop("pending_season", None)
+            context.user_data.pop("selected_tmdb", None)
         return
 
     # No destination set — store link in pending queue
@@ -200,10 +200,20 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             # Pre-fill title/season so user just picks a library
             context.user_data["pending_title"] = recent["title"]
             context.user_data["pending_season"] = recent.get("season")
+            context.user_data["pending_year"] = recent.get("year")
+            recent_lib = recent.get("library") or {}
+            recent_type = recent_lib.get("type", "movie")
+            context.user_data["selected_tmdb"] = {
+                "id": 0,
+                "kind": "tv" if recent_type in ("series", "anime") else "movie",
+                "title": recent["title"],
+                "year": recent.get("year"),
+            }
             await message.reply_text(
                 f"Detected: {guess}\n\n"
                 f"Continue '{recent['title']}' "
-                f"(Season {recent['season']})? Pick a library:",
+                + (f"Season {recent['season']}? " if recent.get("season") else "")
+                + "Pick a library:",
                 reply_markup=build_library_keyboard(),
             )
         else:

@@ -34,18 +34,19 @@ def reset_flow_state(context) -> None:
         "download_dir",
         "season_hint",
         "active_library",
+        "selected_type",
         "pending_links",
     ]:
         context.chat_data.pop(key, None)
 
 
-def record_recent(context, chat_id: int, title: str, library: dict, season: Optional[int]) -> None:
+def record_recent(context, chat_id: int, title: str, library: dict, season: Optional[int], year: Optional[int] = None) -> None:
     key = title.strip().lower()
     entries: list = context.bot_data.setdefault("recent_destinations", {}).setdefault(
         chat_id, []
     )
     entries[:] = [e for e in entries if e.get("key") != key]
-    entries.insert(0, {"key": key, "title": title, "library": library, "season": season})
+    entries.insert(0, {"key": key, "title": title, "library": library, "season": season, "year": year})
     if len(entries) > 5:
         entries.pop()
 

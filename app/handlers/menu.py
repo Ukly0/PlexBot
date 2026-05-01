@@ -359,16 +359,22 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
             context.chat_data.pop("season_hint", None)
+            context.chat_data.pop("selected_type", None)
             context.user_data.pop("pending_title", None)
             context.user_data.pop("pending_year", None)
+            context.user_data.pop("pending_season", None)
+            context.user_data.pop("selected_tmdb", None)
     elif action == "new_search":
         # Keep the pending links, clear destination, trigger auto-detect on them
         pending: list = context.chat_data.get("pending_links", [])
         context.chat_data.pop("download_dir", None)
         context.chat_data.pop("active_library", None)
         context.chat_data.pop("season_hint", None)
+        context.chat_data.pop("selected_type", None)
         context.user_data.pop("pending_title", None)
         context.user_data.pop("pending_year", None)
+        context.user_data.pop("pending_season", None)
+        context.user_data.pop("selected_tmdb", None)
         context.user_data.pop("state", None)
 
         if not pending:

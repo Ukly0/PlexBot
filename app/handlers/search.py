@@ -306,9 +306,19 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = sel.get("title") or context.user_data.get("pending_title", "Content")
     year = sel.get("year") or context.user_data.get("pending_year")
     kind = sel.get("kind", "movie")
-    season = context.user_data.get("pending_season")
+    season = context.user_data.get("pending_season") if kind == "tv" else None
+
+    # Clear stale season for movies
+    if kind != "tv":
+        context.user_data.pop("pending_season", None)
 
     from app.handlers.download import set_destination, queue_download
+
+    # Build full title with year for display and naming consistency
+    full_title = title
+    if year:
+        full_title = f"{title} ({year})"
+    context.user_data["pending_title"] = full_title
 
     download_dir = await set_destination(
         update, context, library, title, year, season
@@ -329,7 +339,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context,
                 item["link"],
                 download_dir,
-                title,
+                full_title,
                 season,
                 year,
                 item.get("filename") or item["link"],
@@ -339,8 +349,11 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
             context.chat_data.pop("season_hint", None)
+            context.chat_data.pop("selected_type", None)
             context.user_data.pop("pending_title", None)
             context.user_data.pop("pending_year", None)
+            context.user_data.pop("pending_season", None)
+            context.user_data.pop("selected_tmdb", None)
     else:
         await _edit_message(
             query,

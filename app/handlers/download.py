@@ -321,6 +321,11 @@ async def queue_download(
     lib_type = active_lib.get("type") or context.chat_data.get("selected_type")
     human_label = display_name or title or link
 
+    lib_type_snapshot = lib_type
+    year_snapshot = year
+    title_snapshot = title
+    season_hint_snapshot = season_hint
+
     status_holder: dict = {"msg": None}
 
     async def _safe_send(text: str):
@@ -392,7 +397,7 @@ async def queue_download(
             else:
                 try:
                     logging.info("Post-processing download at %s (%s new files)", path_clean, len(new_files))
-                    _process_directory(path_clean, title, season_hint, lib_type, year)
+                    _process_directory(path_clean, title_snapshot, season_hint_snapshot, lib_type_snapshot, year_snapshot)
                 except Exception as e:
                     logging.error("Post-process failed: %s", e)
             try:
@@ -401,7 +406,7 @@ async def queue_download(
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
 
         if ok:
-            record_recent(context, message.chat_id, title, active_lib, season_hint)
+            record_recent(context, message.chat_id, title_snapshot, active_lib, season_hint_snapshot, year_snapshot)
             done_text = f"✅ Done: {human_label}\n{path_clean}"
             try:
                 if not await _safe_edit(status_msg, done_text):
@@ -442,7 +447,10 @@ async def set_destination(
     season: Optional[int],
 ) -> str:
     root = library["root"]
-    folder_name = safe_title(title)
+    base_title = title or "Content"
+    if year:
+        base_title = f"{base_title} ({year})"
+    folder_name = safe_title(base_title)
     base_dir = os.path.join(root, folder_name)
     download_dir = base_dir
 
