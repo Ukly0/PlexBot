@@ -22,28 +22,58 @@ from app.state import (
 # ── Noise tokens (lowered for case-insensitive comparison) ─────────
 
 _NOISE_TOKENS = {
-    "1080p", "720p", "480p", "2160p", "4k", "bluray", "webdl", "webrip",
-    "hdrip", "x264", "x265", "h264", "h265", "hdr", "dolby", "atmos",
-    "dts", "aac", "ac3", "eac3", "truehd", "remux", "hevc", "avc",
-    "web", "dl", "nf", "amzn", "dsnp", "hulu", "hmax", "atvp",
-    "multi", "dual", "sub", "subs", "espa", "latino", "castellano",
-    "english", "eng", "esp", "hd", "full", "proper", "repack", "extended",
-    "directors", "cut", "theatrical", "uncut", "unrated",
-    "10bit", "6ch", "ita", "fre", "ger", "jpn", "kor", "rus", "esp",
+    # Codecs
+    "x264", "x265", "h264", "h265", "hevc", "avc", "vp9", "av1",
+    # Sources
+    "bluray", "webdl", "webrip", "hdrip", "dvdrip", "brrip", "bdrip",
+    "remux", "hdtv", "pdtv", "satrip", "dvd",
+    # Streaming groups
+    "nf", "amzn", "dsnp", "hulu", "hmax", "atvp", "pmtp", "crav", "stan",
+    # Audio
+    "aac", "dts", "ac3", "eac3", "truehd", "atmos", "flac", "ddp", "dd",
+    "5.1", "7.1", "2.0", "5.1ch", "7.1ch",
+    # Quality
+    "1080p", "720p", "480p", "576p", "360p", "2160p", "800p", "4k", "uhd",
+    "hd", "fhd", "hdr", "dolby", "dovi", "hdr10",
+    # Language codes (common 2-letter)
+    "es", "en", "fr", "de", "it", "pt", "pl", "ru", "ja", "ko", "zh",
+    # Language tags (longer)
+    "espa", "latino", "castellano", "english", "eng", "esp", "ita",
+    "fre", "ger", "jpn", "kor", "rus",
+    # Containers/formats
+    "mp4", "mkv", "avi", "webm", "flv", "wmv", "mov", "ts",
+    # Scene tags
+    "multi", "dual", "sub", "subs", "proper", "repack", "extended",
+    "directors", "cut", "theatrical", "uncut", "unrated", "complete",
+    "completos", "forzados", "quemados", "10bit", "6ch",
+    # Framerates
+    "24fps", "25fps", "30fps", "60fps",
+    # Release groups (common)
+    "scorpion", "xusman", "kowalski", "yts", "ettv", "rartv", "btn",
+    "nzb", "rarbg", "tigole", "ptp", "hdbits",
+    # Misc
+    "web", "dl", "full", "ntsc", "pal",
 }
 
-# ── Episode/season extraction patterns (applied BEFORE TMDb search) ──
+# ── Pre-processing patterns (applied BEFORE tokenization) ───────────
 
-# S01E02, S1E02, 1x02, S02.E05 — per-token matching
-_RX_SE_TOKEN = re.compile(
-    r"^S?(\d{1,2})[xEex](\d{1,3})(?:[Ee](\d{1,3}))*$", re.I
-)
-# S02 standalone as a token
+# Strip audio configs like 5.1, 7.1, 2.0 before tokenization splits on "."
+_RX_AUDIO_CONFIG = re.compile(r"\b\d\.\d\b", re.I)
+
+# S01E02, S1E2, 1x04, S02.E05, 1X04 — per-token matching
+_RX_SE_TOKEN = re.compile(r"^S?(\d{1,2})[xEex](\d{1,3})", re.I)
+# S02 standalone as a token (season-only marker)
 _RX_SEASON_TOKEN = re.compile(r"^S(\d{1,2})$", re.I)
-# Year token: (2024) or standalone 2024 (4 digits starting with 19 or 20)
+# Year in parentheses: (2024), (2024-text)  — matched BEFORE tokenization
+_RX_PAREN_YEAR = re.compile(r"\((19\d{2}|20\d{2})(?:\s*[-–—]\s*[^)]*)?\)")
+# Remaining parentheses (non-year, already stripped by pre-pass)
+_RX_PAREN_CONTENT = re.compile(r"\([^)]*\)")
+# Year as standalone token: (2024) after space normalization, or just 2024
 _RX_YEAR_TOKEN = re.compile(r"^\(?((?:19|20)\d{2})\)?$")
-# Resolution tokens: 1080p, 720p, etc. (matched case-insensitively later)
-_RX_RES_TOKEN = re.compile(r"^(?:2160p|1080p|720p|480p|576p|360p|4k)$", re.I)
+# Resolution tokens: 1080p, 720p, etc.
+_RX_RES_TOKEN = re.compile(r"^(?:2160p|1080p|720p|576p|480p|360p|800p|4k)$", re.I)
+# Framerate token: 24fps, etc.
+_RX_FPS_TOKEN = re.compile(r"^\d+fps$", re.I)
 
 # ── Patterns that indicate the string is *only* an episode/season marker ──
 
@@ -68,37 +98,78 @@ class ParsedName:
 def _parse_filename(filename: str) -> ParsedName:
     """Extract title, season, episode, and year from a filename.
 
-    Tokenizes the filename, classifies each token, and builds a clean
-    title for TMDb search while preserving extracted metadata.
+    PRE-PASS extracts years from parenthetical expressions and strips all
+    parenthetical content. Then tokenizes, classifies each token, and builds
+    a clean title. Tokens after the first SxxExx marker are treated as
+    subtitle/noise and excluded from the title.
     """
-    stem = os.path.splitext(filename)[0]
+    # Strip known video/archive extensions only
+    # (os.path.splitext treats 5.1, 7.1 as extensions — too greedy)
+    _VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".mov", ".ts", ".m4v", ".webm",
+                   ".flv", ".wmv", ".mpg", ".mpeg", ".m2ts", ".mts",
+                   ".rar", ".zip", ".7z", ".tar", ".gz")
+    stem = filename
+    for ext in _VIDEO_EXTS:
+        if stem.lower().endswith(ext):
+            stem = stem[: -len(ext)]
+            break
+
+    # ── PRE-PASS: Strip audio configs like 5.1, 7.1, 2.0 ────────────
+    # Must happen before "." → " " normalization splits them
+    stem = _RX_AUDIO_CONFIG.sub(" ", stem)
+
+    # ── PRE-PASS: Extract year from (YYYY) or (YYYY-text) ───────────
+    year = None
+
+    def _extract_year(m):
+        nonlocal year
+        if year is None:
+            year = int(m.group(1))
+        return " "
+
+    stem = _RX_PAREN_YEAR.sub(_extract_year, stem)
+
+    # ── PRE-PASS: Strip remaining parenthetical content ──────────────
+    # E.g. "(Esta chica me pone)", "(1080p)", alternate titles
+    stem = _RX_PAREN_CONTENT.sub(" ", stem)
+
+    # ── Normalize all separators to spaces ───────────────────────────
     cleaned = stem.replace(".", " ").replace("_", " ").replace("-", " ")
+    cleaned = cleaned.replace("+", " ").replace("&", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
     tokens = cleaned.split()
 
-    year = None
     season = None
     episode = None
     title_tokens = []
+    se_position = None  # index where first SxxExx marker was found
 
-    for tok in tokens:
+    for i, tok in enumerate(tokens):
         tok_lower = tok.lower()
 
-        # Check year: (2024), 2024, etc.
+        # Check year token: (2024), 2024, etc.
         ym = _RX_YEAR_TOKEN.match(tok)
         if ym:
-            year = int(ym.group(1))
+            if year is None:
+                year = int(ym.group(1))
             continue
 
         # Check SxxExx pattern
         sem = _RX_SE_TOKEN.match(tok)
         if sem:
+            if se_position is None:
+                se_position = i
             season = int(sem.group(1))
+            # Some tokens like "1X04Hulk" have trailing chars — only extract digits
             episode = int(sem.group(2))
             continue
 
         # Check S02 standalone
         sm = _RX_SEASON_TOKEN.match(tok)
         if sm:
+            if se_position is None:
+                se_position = i
             season = int(sm.group(1))
             continue
 
@@ -106,17 +177,74 @@ def _parse_filename(filename: str) -> ParsedName:
         if _RX_RES_TOKEN.match(tok_lower):
             continue
 
-        # Check noise tokens
+        # Check fps tokens
+        if _RX_FPS_TOKEN.match(tok_lower):
+            continue
+
+        # Check noise tokens (exact match)
         if tok_lower in _NOISE_TOKENS:
+            continue
+
+        # ── Tokens AFTER the SxxExx marker are subtitle/noise ───────
+        # Only include title tokens that come BEFORE the marker.
+        # Exception: allow a few post-marker tokens if no SE was found
+        # (movie titles have no season marker).
+        if se_position is not None:
+            continue
+
+# Skip tokens that are purely non-alphabetic (numbers, symbols, emoji)
+        # Exception: keep small numbers that are part of a franchise name
+        # (e.g. "2" in "Greenland 2") only if the preceding title word is
+        # capitalized AND the next token is NOT a small digit (avoids "5 1" from 5.1)
+        if tok and not any(c.isalpha() for c in tok):
+            if tok.isdigit() and 1 <= int(tok) <= 99:
+                prev_cap = title_tokens and title_tokens[-1][0].isupper()
+                next_is_digit = (
+                    i + 1 < len(tokens)
+                    and tokens[i + 1].isdigit()
+                    and len(tokens[i + 1]) <= 2
+                )
+                if prev_cap and not next_is_digit:
+                    pass  # franchise number like "Greenland 2"
+                else:
+                    continue  # audio config like "5" in "5.1"
+            else:
+                continue
+
+        # Skip single-character tokens that are likely noise (s, c, etc.)
+        # but keep single-letter articles/prepositions common in titles
+        # and single-digit franchise numbers (2 in "Greenland 2")
+        _KEEP_SHORT = {"a", "e", "y", "o", "u", "el", "la", "lo", "le",
+                       "de", "del", "al", "en", "un", "una", "the", "of",
+                       "in", "on", "at", "to", "is", "an", "as", "by", "or"}
+        if len(tok) == 1 and tok.lower() not in _KEEP_SHORT and not tok.isupper() and not tok.isdigit():
             continue
 
         title_tokens.append(tok)
 
+# ── Post-processing: strip "by releasegroup" suffixes ────────────
+    # Scene releases often end with "by groupname" or "by group1&group2"
+    # Remove everything from last "by" if followed by lowercase/funky tokens
+    by_index = None
+    for j in range(len(title_tokens) - 1, -1, -1):
+        if title_tokens[j].lower() == "by" and j < len(title_tokens) - 1:
+            by_index = j
+            break
+    if by_index is not None:
+        after_by = " ".join(title_tokens[by_index + 1:]).lower()
+        group_indicators = any(
+            c in after_by for c in "&0123456789"
+        ) or len(after_by.split()) <= 3
+        if group_indicators:
+            title_tokens = title_tokens[:by_index]
+    # Also strip trailing "by" that has no subsequent tokens (noise suffix)
+    if title_tokens and title_tokens[-1].lower() == "by":
+        title_tokens.pop()
+
     title = " ".join(title_tokens).strip()
     title = re.sub(r"\s+", " ", title)
 
-    # If all tokens were noise/markers, fall back to full cleaned stem
-    # minus noise and markers
+    # ── Fallback: if title is too short, try including post-SE tokens ─
     if not title or len(title) < 2:
         fallback_tokens = []
         for tok in tokens:
@@ -129,8 +257,15 @@ def _parse_filename(filename: str) -> ParsedName:
                 continue
             if _RX_RES_TOKEN.match(tok_lower):
                 continue
+            if _RX_FPS_TOKEN.match(tok_lower):
+                continue
             if tok_lower in _NOISE_TOKENS:
                 continue
+            if tok and not any(c.isalpha() for c in tok):
+                if tok.isdigit() and 1 <= int(tok) <= 99:
+                    pass
+                else:
+                    continue
             fallback_tokens.append(tok)
         title = " ".join(fallback_tokens).strip() or cleaned.strip()
 
