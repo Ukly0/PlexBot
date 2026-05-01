@@ -281,12 +281,26 @@ def _process_directory(
 
     root = _Path(directory)
     if not root.exists():
+        logging.warning("_process_directory: path does not exist: %s", directory)
         return
+    files_before = [str(p) for p in root.rglob("*") if p.is_file()]
+    logging.info(
+        "_process_directory: dir=%s title=%s season=%s lib_type=%s year=%s files=%s",
+        directory, title, season_hint, lib_type, year, len(files_before),
+    )
     extract_archives(root)
     if lib_type in SERIES_TYPES:
+        logging.info("_process_directory: calling bulk_rename (series)")
         bulk_rename(root, title, season_hint)
     elif lib_type in MOVIE_TYPES or lib_type is None:
+        logging.info("_process_directory: calling rename_movie_files (movie)")
         rename_movie_files(root, title, year)
+    else:
+        logging.warning("_process_directory: unknown lib_type=%s, defaulting to series", lib_type)
+        bulk_rename(root, title, season_hint)
+    files_after = [str(p) for p in root.rglob("*") if p.is_file()]
+    renamed = set(files_after) - set(files_before)
+    logging.info("_process_directory: done. files_before=%d files_after=%d renamed=%d", len(files_before), len(files_after), len(renamed))
 
 
 def _should_reset_after_enqueue(context, lib_type: str) -> bool:
@@ -396,12 +410,17 @@ async def queue_download(
                 logging.info("Skipping post-process for %s (pending tasks: %s)", path_clean, pending_same)
             else:
                 try:
-                    logging.info("Post-processing download at %s (%s new files)", path_clean, len(new_files))
-                    _process_directory(path_clean, title_snapshot, season_hint_snapshot, lib_type_snapshot, year_snapshot)
+                    logging.info(
+                        "Post-processing download at %s (%s new files) lib_type=%s title=%s season=%s year=%s",
+                        path_clean, len(new_files), lib_type_snapshot, title_snapshot, season_hint_snapshot, year_snapshot,
+                    )
+                    await asyncio.to_thread(
+                        _process_directory, path_clean, title_snapshot, season_hint_snapshot, lib_type_snapshot, year_snapshot
+                    )
                 except Exception as e:
                     logging.error("Post-process failed: %s", e)
             try:
-                _apply_permissions(path_clean)
+                await asyncio.to_thread(_apply_permissions, path_clean)
             except Exception as e:
                 logging.warning("Permission fix failed for %s: %s", path_clean, e)
 
