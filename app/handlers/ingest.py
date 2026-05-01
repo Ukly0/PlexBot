@@ -170,21 +170,24 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         _add_pending(context, link, filename)
         lib_name = active_lib.get("name", "")
         season_label = f" S{season:02d}" if season else ""
-        await message.reply_text(
-            f"📥 Added to batch: {title}{season_label} → {lib_name}\n"
-            f"Pending: {len(context.chat_data.get('pending_links', []))} item(s).\n\n"
-            f"Continue with this series or start a new search?",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "✅ Continue batch", callback_data="action|continue_batch"
-                    ),
-                    InlineKeyboardButton(
-                        "🔍 New search", callback_data="action|new_search"
-                    ),
-                ]
-            ]),
-        )
+        try:
+            await message.reply_text(
+                f"📥 Added to batch: {title}{season_label} → {lib_name}\n"
+                f"Pending: {len(context.chat_data.get('pending_links', []))} item(s).\n\n"
+                f"Continue with this series or start a new search?",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "✅ Continue batch", callback_data="action|continue_batch"
+                        ),
+                        InlineKeyboardButton(
+                            "🔍 New search", callback_data="action|new_search"
+                        ),
+                    ]
+                ]),
+            )
+        except Exception as e:
+            logging.warning("Could not send batch message: %s", e)
         return
 
     # No destination set — store link in pending queue
