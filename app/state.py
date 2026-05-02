@@ -38,6 +38,7 @@ def reset_flow_state(context) -> None:
         "selected_type",
         "pending_links",
         "batch_prompted",
+        "_batch_notices",
     ]:
         context.chat_data.pop(key, None)
 

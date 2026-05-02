@@ -1,5 +1,7 @@
 """TMDb search flow: result selection, pagination, season pick, library choice."""
 
+import asyncio
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -17,6 +19,11 @@ from app.state import (
     set_state,
 )
 from app.config import load_settings
+from app.handlers.telegram_utils import (
+    delete_safely,
+    edit_message_safely,
+    safe_answer,
+)
 
 PAGE_SIZE = 5
 
@@ -127,11 +134,7 @@ def build_library_keyboard() -> InlineKeyboardMarkup:
 
 async def _edit_message(query, text: str, reply_markup=None):
     """Edit text or caption depending on whether the message is a photo."""
-    msg = query.message
-    if msg.photo:
-        await msg.edit_caption(caption=text, reply_markup=reply_markup)
-    else:
-        await msg.edit_text(text, reply_markup=reply_markup)
+    await edit_message_safely(query.message, text, reply_markup=reply_markup)
 
 
 # ── Formatting ───────────────────────────────────────────────────
@@ -154,7 +157,7 @@ def _format_item_preview(item: TMDbItem) -> str:
 
 async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     parts = (query.data or "").split("|")
     if len(parts) != 2:
         return
@@ -174,7 +177,7 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     parts = (query.data or "").split("|")
     if len(parts) != 3:
         return
@@ -210,7 +213,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
         st = load_settings()
         existing_lib = find_existing_library(item.title, item.year, st.libraries)
 
-        seasons = get_seasons(item.id)
+        seasons = await asyncio.to_thread(get_seasons, item.id)
         season_markup_buttons = []
 
         if existing_lib:
@@ -266,7 +269,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text += f"\n📁 Auto-detected: {existing_lib['name']}"
 
         if item.poster:
-            await query.message.delete()
+            await delete_safely(query.message)
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=item.poster,
@@ -286,7 +289,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     existing_lib = find_existing_library(item.title, item.year, st.libraries, MOVIE_TYPES)
 
     if existing_lib:
-        from app.handlers.download import set_destination, queue_download
+        from app.handlers.download import set_destination, queue_download_batch
 
         lib_dict = {"name": existing_lib["name"], "root": existing_lib["root"], "type": existing_lib["type"]}
         context.user_data.pop("state", None)
@@ -300,12 +303,10 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
         pending_items: list = context.chat_data.pop("pending_links", [])
         if pending_items:
             await _edit_message(query, f"📁 Auto: {existing_lib['name']}\nQueuing {len(pending_items)} item(s)...")
-            for pi in pending_items:
-                await queue_download(
-                    query.message, context, pi["link"], download_dir,
-                    full_title, None, item.year, pi.get("filename") or pi["link"],
-                    use_group=pi.get("is_text", False),
-                )
+            await queue_download_batch(
+                query.message, context, pending_items,
+                download_dir, full_title, None, item.year,
+            )
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
             context.chat_data.pop("season_hint", None)
@@ -322,7 +323,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
     markup = build_library_keyboard()
     text = f"{_format_item_preview(item)}\n\nSelect destination library:"
     if item.poster:
-        await query.message.delete()
+        await delete_safely(query.message)
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
             photo=item.poster,
@@ -335,7 +336,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     parts = (query.data or "").split("|")
     if len(parts) != 2:
         return
@@ -372,7 +373,7 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If a series auto-library was detected, skip library selection
     auto_lib = context.user_data.pop("auto_library", None)
     if auto_lib:
-        from app.handlers.download import set_destination, queue_download
+        from app.handlers.download import set_destination, queue_download_batch
 
         full_title = title
         if year:
@@ -388,13 +389,10 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if pending_items:
             await _edit_message(query, f"📁 {auto_lib['name']} — Season {season_num:02d}\nQueuing {len(pending_items)} item(s)...")
-            for item in pending_items:
-                await queue_download(
-                    query.message, context, item["link"],
-                    download_dir, full_title, season_num, year,
-                    item.get("filename") or item["link"],
-                    use_group=item.get("is_text", False),
-                )
+            await queue_download_batch(
+                query.message, context, pending_items,
+                download_dir, full_title, season_num, year,
+            )
         else:
             markup = InlineKeyboardMarkup([[_home_button()]])
             await _edit_message(query, f"📁 {auto_lib['name']} — Season {season_num:02d}\n{download_dir}\n\nSend a link or file.", reply_markup=markup)
@@ -408,7 +406,7 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     parts = (query.data or "").split("|")
     if len(parts) != 2:
         return
@@ -435,7 +433,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if kind != "tv":
         context.user_data.pop("pending_season", None)
 
-    from app.handlers.download import set_destination, queue_download
+    from app.handlers.download import set_destination, queue_download_batch
 
     # Build full title with year for display and naming consistency
     full_title = title
@@ -456,19 +454,10 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query,
             f"Destination: {download_dir}\nQueuing {count} item(s)..."
         )
-        for item in pending_items:
-            is_text = item.get("is_text", False)
-            await queue_download(
-                query.message,
-                context,
-                item["link"],
-                download_dir,
-                full_title,
-                season,
-                year,
-                item.get("filename") or item["link"],
-                use_group=is_text,
-            )
+        await queue_download_batch(
+            query.message, context, pending_items,
+            download_dir, full_title, season, year,
+        )
         # For movies, clear destination after queuing so next file starts fresh
         if library.get("type") not in ("series", "anime"):
             context.chat_data.pop("download_dir", None)
@@ -489,7 +478,7 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_manual_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     await _edit_message(query, 
         "Type the title:",
         reply_markup=InlineKeyboardMarkup(
@@ -509,7 +498,7 @@ async def handle_manual_entry(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_autolib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the auto-detected library button — clears it so user picks manually."""
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     context.user_data.pop("auto_library", None)
     sel = context.user_data.get("selected_tmdb") or {}
     title = sel.get("title", "Content")
@@ -520,7 +509,7 @@ async def handle_autolib(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_cancel_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     from app.state import reset_flow_state as reset
 
     reset(context)

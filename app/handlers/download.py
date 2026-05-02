@@ -24,6 +24,11 @@ DIR_MODE = 0o755
 FILE_MODE = 0o644
 
 
+def _next_batch_id(context) -> int:
+    counter = context.bot_data.setdefault("_download_batch_counter", itertools.count(1))
+    return next(counter)
+
+
 # ── DownloadManager ─────────────────────────────────────────────
 
 @dataclass
@@ -321,6 +326,10 @@ async def queue_download(
     year: Optional[int] = None,
     display_name: Optional[str] = None,
     use_group: bool = False,
+    notify_queued: bool = True,
+    batch_id: Optional[int] = None,
+    batch_index: Optional[int] = None,
+    batch_total: Optional[int] = None,
 ):
     st = load_settings()
     tdl_template = st.download.tdl_template
@@ -348,6 +357,7 @@ async def queue_download(
     season_hint_snapshot = season_hint
 
     status_holder: dict = {"msg": None}
+    batch_mode = batch_id is not None and (batch_total or 0) > 1
 
     async def _safe_send(text: str, max_retries: int = 3):
         for attempt in range(max_retries):
@@ -392,8 +402,30 @@ async def queue_download(
         logging.error("Status edit failed after %s retries", max_retries)
         return False
 
+    async def _safe_batch_edit(text: str):
+        if not batch_mode:
+            return False
+        batches = context.bot_data.get("download_batches", {})
+        batch = batches.get(batch_id)
+        if not batch:
+            return False
+        msg = batch.get("msg")
+        if msg is None:
+            msg = await _safe_send(text)
+            batch["msg"] = msg
+            return msg is not None
+        ok = await _safe_edit(msg, text)
+        return ok
+
     async def _run():
-        status_msg = await _safe_send(f"▶️ Starting: {human_label}")
+        status_msg = None
+        if batch_mode:
+            await _safe_batch_edit(
+                f"⬇️ Batch: {context.bot_data.get('download_batches', {}).get(batch_id, {}).get('label', title_snapshot)}\n"
+                f"Downloading {batch_index}/{batch_total}: {human_label}"
+            )
+        else:
+            status_msg = await _safe_send(f"▶️ Starting: {human_label}")
         status_holder["msg"] = status_msg
 
         before_files = _snapshot_files(path_clean)
@@ -414,7 +446,13 @@ async def queue_download(
             bar_len = 20
             filled = int(bar_len * pct / 100)
             bar = "█" * filled + "░" * (bar_len - filled)
-            await _safe_edit(status_msg, f"⬇️ Downloading: {human_label}\n[{bar}] {pct}%")
+            if batch_mode:
+                await _safe_batch_edit(
+                    f"⬇️ Batch: {context.bot_data.get('download_batches', {}).get(batch_id, {}).get('label', title_snapshot)}\n"
+                    f"Downloading {batch_index}/{batch_total}: {human_label}\n[{bar}] {pct}%"
+                )
+            else:
+                await _safe_edit(status_msg, f"⬇️ Downloading: {human_label}\n[{bar}] {pct}%")
 
         try:
             register_pid = lambda pid: mgr.child_pids.setdefault(message.chat_id, []).append(pid)
@@ -437,6 +475,18 @@ async def queue_download(
                 except (FileNotFoundError, Exception):
                     pass
             logging.error("Download failed; skipped post-processing for %s", path_clean)
+            pending_same = await mgr.pending_for_content(message.chat_id, path_clean)
+            if pending_same == 0:
+                try:
+                    logging.info(
+                        "Post-processing remaining files after final failed item at %s lib_type=%s title=%s season=%s year=%s",
+                        path_clean, lib_type_snapshot, title_snapshot, season_hint_snapshot, year_snapshot,
+                    )
+                    await asyncio.to_thread(
+                        _process_directory, path_clean, title_snapshot, season_hint_snapshot, lib_type_snapshot, year_snapshot
+                    )
+                except Exception as e:
+                    logging.error("Post-process after failure failed: %s", e)
         else:
             pending_same = await mgr.pending_for_content(message.chat_id, path_clean)
             if pending_same > 0:
@@ -452,10 +502,42 @@ async def queue_download(
                     )
                 except Exception as e:
                     logging.error("Post-process failed: %s", e)
-            try:
-                await asyncio.to_thread(_apply_permissions, path_clean)
-            except Exception as e:
-                logging.warning("Permission fix failed for %s: %s", path_clean, e)
+
+        try:
+            await asyncio.to_thread(_apply_permissions, path_clean)
+        except Exception as e:
+            logging.warning("Permission fix failed for %s: %s", path_clean, e)
+
+        if batch_mode:
+            if ok:
+                record_recent(context, message.chat_id, title_snapshot, active_lib, season_hint_snapshot, year_snapshot)
+            batches = context.bot_data.get("download_batches", {})
+            batch = batches.get(batch_id)
+            if batch is not None:
+                if ok:
+                    batch["done"] = batch.get("done", 0) + 1
+                else:
+                    batch["failed"] = batch.get("failed", 0) + 1
+                completed = batch.get("done", 0) + batch.get("failed", 0)
+                total = batch.get("total", batch_total or completed)
+                label = batch.get("label", title_snapshot)
+                if completed >= total:
+                    if batch.get("failed", 0):
+                        text = (
+                            f"⚠️ Batch finished: {label}\n"
+                            f"Done: {batch.get('done', 0)} · Failed: {batch.get('failed', 0)}\n"
+                            f"{path_clean}"
+                        )
+                    else:
+                        text = f"✅ Batch complete: {label}\n{total} item(s)\n{path_clean}"
+                    await _safe_batch_edit(text)
+                    batches.pop(batch_id, None)
+                else:
+                    await _safe_batch_edit(
+                        f"⬇️ Batch: {label}\n"
+                        f"Completed {completed}/{total}. Next items remain queued."
+                    )
+            return
 
         if ok:
             record_recent(context, message.chat_id, title_snapshot, active_lib, season_hint_snapshot, year_snapshot)
@@ -483,11 +565,68 @@ async def queue_download(
         content_label=title,
         content_destination=path_clean,
     )
-    if pos > 1:
+    if notify_queued and pos > 1:
         try:
             await message.reply_text(f"⏳ Added to queue (position {pos}).")
         except Exception:
             pass
+    return pos, _
+
+
+async def queue_download_batch(
+    message,
+    context,
+    items: list[dict],
+    download_dir: str,
+    title: str,
+    season_hint: Optional[int],
+    year: Optional[int] = None,
+):
+    if not items:
+        return
+    if len(items) == 1:
+        item = items[0]
+        await queue_download(
+            message, context, item["link"], download_dir,
+            title, season_hint, year,
+            item.get("filename") or item["link"],
+            use_group=item.get("is_text", False),
+        )
+        return
+
+    batch_id = _next_batch_id(context)
+    label = title or "Content"
+    initial = (
+        f"⏳ Queued batch: {label}\n"
+        f"{len(items)} item(s)\n"
+        f"{download_dir}\n\n"
+        "Use /queue to view or cancel."
+    )
+    status_msg = None
+    try:
+        status_msg = await message.reply_text(initial)
+    except Exception as e:
+        logging.warning("Could not send batch status message: %s", e)
+
+    context.bot_data.setdefault("download_batches", {})[batch_id] = {
+        "msg": status_msg,
+        "label": label,
+        "total": len(items),
+        "done": 0,
+        "failed": 0,
+    }
+
+    for idx, item in enumerate(items, start=1):
+        await queue_download(
+            message, context, item["link"], download_dir,
+            title, season_hint, year,
+            item.get("filename") or item["link"],
+            use_group=item.get("is_text", False),
+            notify_queued=False,
+            batch_id=batch_id,
+            batch_index=idx,
+            batch_total=len(items),
+        )
 
 
 async def set_destination(

@@ -143,8 +143,9 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 | `download_dir` | `str` | Chosen destination path |
 | `season_hint` | `int` or `None` | Season number for current download |
 | `active_library` | `dict` | `{name, root, type}` — selected library |
-| `pending_link` | `str` | Telegram link awaiting destination |
-| `pending_file` | `str` | Filename from forwarded file |
+| `pending_links` | `list[dict]` | Telegram links/files awaiting destination or batch confirmation |
+| `batch_prompted` | `bool` | Whether the current series batch prompt has already been shown |
+| `_batch_notices` | `dict` | Debounce state for repeated batch status messages |
 
 ### `context.bot_data` (global singletons)
 
@@ -153,6 +154,7 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 | `dl_manager` | `DownloadManager` | Single download queue worker |
 | `recent_destinations` | `dict[chat_id, list]` | In-memory cache of recent downloads per chat |
 | `settings` | `Settings` | Loaded library configuration |
+| `download_batches` | `dict` | Runtime status messages for compact multi-item batch progress |
 
 Call `reset_flow_state(context)` to clear all user_data and chat_data keys on cancel or completion.
 
@@ -177,7 +179,7 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 
 ## Download Pipeline
 
-1. `app/handlers/download.py::queue_download(url, dest_dir, season_hint)` builds the `tdl` command and enqueues a coroutine factory in `DownloadManager`.
+1. `app/handlers/download.py::queue_download(url, dest_dir, season_hint)` builds the `tdl` command and enqueues a coroutine factory in `DownloadManager`. `queue_download_batch()` wraps multiple items into one compact Telegram status message.
 2. `DownloadManager` processes one task at a time via a single async worker. It is a global singleton stored in `bot_data["dl_manager"]`.
 3. `app/services/downloader.py::run_download()` calls `tdl dl` as an async subprocess, parsing progress from stdout. Constants:
    - Retries: 3 on failure

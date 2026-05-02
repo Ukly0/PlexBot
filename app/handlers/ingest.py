@@ -4,6 +4,7 @@ import os
 import re
 import logging
 import asyncio
+import time
 from typing import Optional
 from dataclasses import dataclass
 
@@ -338,6 +339,26 @@ def _add_pending(context, link: str, filename: Optional[str], is_text: bool = Fa
     return True
 
 
+def _should_send_batch_notice(
+    context,
+    key: str,
+    count: int,
+    *,
+    interval: float = 15.0,
+) -> bool:
+    """Debounce repeated batch notices while Telegram delivers many files."""
+    notices = context.chat_data.setdefault("_batch_notices", {})
+    last = notices.get(key, {})
+    now = time.monotonic()
+    last_ts = float(last.get("ts", 0.0))
+    last_count = int(last.get("count", 0))
+    milestone = count in {2, 5, 10, 25, 50, 100}
+    if count != last_count and (milestone or now - last_ts >= interval):
+        notices[key] = {"ts": now, "count": count}
+        return True
+    return False
+
+
 async def _safe_reply(message, text: str, reply_markup=None, max_retries: int = 3):
     """Send a reply with RetryAfter/TimedOut handling."""
     from telegram.error import RetryAfter, TimedOut
@@ -442,7 +463,8 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
 
         # If we already showed the batch prompt, just confirm silently
         if context.chat_data.get("batch_prompted"):
-            await _safe_reply(message, f"✅ Added to batch ({pending_count} pending) → {lib_name}")
+            if _should_send_batch_notice(context, "active_batch", pending_count):
+                await _safe_reply(message, f"✅ Batch pending: {pending_count} item(s) → {lib_name}")
             return
 
         context.chat_data["batch_prompted"] = True
@@ -470,11 +492,13 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     # If auto-detection is already in progress (user is picking metadata),
     # don't start another search — the new link is safely queued.
     if context.user_data.get("state") in (STATE_SEARCH, "pending_selection"):
-        await _safe_reply(
-            message,
-            f"📥 Queued. Complete the current selection first.\n"
-            f"Pending: {len(context.chat_data.get('pending_links', []))} item(s).",
-        )
+        pending_count = len(context.chat_data.get("pending_links", []))
+        if _should_send_batch_notice(context, "selection_pending", pending_count):
+            await _safe_reply(
+                message,
+                f"📥 Queued. Complete the current selection first.\n"
+                f"Pending: {pending_count} item(s).",
+            )
         return
 
     # Mark that we're now doing auto-detection
@@ -526,7 +550,7 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             # Auto-search TMDb with the CLEANED title (no SxxExx, no year)
-            results = tmdb_search(guess)
+            results = await asyncio.to_thread(tmdb_search, guess)
             context.user_data["tmdb_results"] = results
             context.user_data["tmdb_page"] = 0
 

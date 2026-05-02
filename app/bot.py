@@ -1,11 +1,13 @@
 """PlexBot entry point — handler registration and bot startup."""
 
+import asyncio
 import logging
 import os
 import tempfile
 import traceback
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -74,7 +76,7 @@ async def _text_router(update, context):
     state = context.user_data.get("state")
 
     if state == STATE_SEARCH:
-        results = tmdb_search(text)
+        results = await asyncio.to_thread(tmdb_search, text)
         context.user_data["tmdb_results"] = results
         context.user_data["tmdb_page"] = 0
         context.user_data.pop("state", None)
@@ -152,12 +154,24 @@ def main():
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).concurrent_updates(8).build()
 
     # Store settings in bot_data for runtime access
     app.bot_data["settings"] = st
 
     async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(context.error, BadRequest):
+            err = str(context.error).lower()
+            benign = (
+                "query is too old" in err
+                or "query id is invalid" in err
+                or "message is not modified" in err
+                or "message to edit not found" in err
+                or "message can't be edited" in err
+            )
+            if benign:
+                logging.getLogger().warning("Ignored Telegram transient error: %s", context.error)
+                return
         logging.getLogger().error(
             "Unhandled error: %s\n%s",
             context.error,

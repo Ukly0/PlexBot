@@ -12,6 +12,11 @@ from telegram.ext import ContextTypes
 
 from app.config import load_settings
 from app.state import reset_flow_state
+from app.handlers.telegram_utils import (
+    delete_safely,
+    edit_message_safely,
+    safe_answer,
+)
 
 
 def _home_button() -> InlineKeyboardMarkup:
@@ -35,24 +40,14 @@ def _shorten(text: str, limit: int = 42) -> str:
 async def _reply_or_edit(update: Update, text: str, reply_markup=None):
     query = update.callback_query
     if query and query.message:
-        try:
-            if query.message.photo:
-                await query.message.edit_caption(caption=text, reply_markup=reply_markup)
-            else:
-                await query.message.edit_text(text, reply_markup=reply_markup)
-            return
-        except Exception:
-            await query.message.reply_text(text, reply_markup=reply_markup)
-            return
+        await edit_message_safely(query.message, text, reply_markup=reply_markup)
+        return
     if update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
 
 
 async def _edit_query_message(query, text: str, reply_markup=None):
-    if query.message.photo:
-        await query.message.edit_caption(caption=text, reply_markup=reply_markup)
-    else:
-        await query.message.edit_text(text, reply_markup=reply_markup)
+    await edit_message_safely(query.message, text, reply_markup=reply_markup)
 
 
 def _main_menu_markup(is_admin: bool) -> InlineKeyboardMarkup:
@@ -176,7 +171,7 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     parts = (query.data or "").split("|")
     if len(parts) != 2:
         return
@@ -277,7 +272,7 @@ async def show_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await safe_answer(query)
     action = (
         (query.data or "").split("|")[1] if "|" in (query.data or "") else ""
     )
@@ -354,17 +349,13 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not pending or not download_dir:
             await query.message.reply_text("Nothing to queue.", reply_markup=_home_button())
             return
-        from app.handlers.download import queue_download
+        from app.handlers.download import queue_download_batch
 
-        await query.message.edit_text(f"Queuing {len(pending)} item(s) for '{title}'...")
-        for item in pending:
-            is_text = item.get("is_text", False)
-            await queue_download(
-                query.message, context, item["link"],
-                download_dir, title, season, year,
-                item.get("filename") or item["link"],
-                use_group=is_text,
-            )
+        await edit_message_safely(query.message, f"Queuing {len(pending)} item(s) for '{title}'...")
+        await queue_download_batch(
+            query.message, context, pending,
+            download_dir, title, season, year,
+        )
         context.chat_data["pending_links"] = []
         active_lib = context.chat_data.get("active_library") or {}
         if active_lib.get("type") not in {"series", "anime"}:
@@ -391,7 +382,8 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("state", None)
 
         if not pending:
-            await query.message.edit_text(
+            await edit_message_safely(
+                query.message,
                 "Destination cleared. Forward a link or file to start a new search.",
                 reply_markup=_home_button(),
             )
@@ -409,7 +401,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from app.services.tmdb import search as tmdb_search, tmdb_last_error
             from app.handlers.search import build_results_keyboard
 
-            results = tmdb_search(guess)
+            results = await asyncio.to_thread(tmdb_search, guess)
             context.user_data["tmdb_results"] = results
             context.user_data["tmdb_page"] = 0
             context.user_data["state"] = "pending_selection"
@@ -418,7 +410,7 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_result = results[0]
                 markup = build_results_keyboard(results, 0)
                 if first_result.poster:
-                    await query.message.delete()
+                    await delete_safely(query.message)
                     await context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         photo=first_result.poster,
@@ -426,21 +418,24 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=markup,
                     )
                 else:
-                    await query.message.edit_text(
+                    await edit_message_safely(
+                        query.message,
                         f"Detected: {guess}\nSelect the matching title:",
                         reply_markup=markup,
                     )
             else:
                 from app.state import STATE_SEARCH, set_state
                 set_state(context.user_data, STATE_SEARCH)
-                await query.message.edit_text(
+                await edit_message_safely(
+                    query.message,
                     f"Detected: {guess}\nNo TMDb results. Type a title to search.",
                 )
         else:
             from app.state import STATE_SEARCH, set_state
             set_state(context.user_data, STATE_SEARCH)
             hint = f"(from: {fname})" if fname else ""
-            await query.message.edit_text(
+            await edit_message_safely(
+                query.message,
                 f"New search {hint}\nType a title to search.",
             )
     elif action.startswith("continue"):
