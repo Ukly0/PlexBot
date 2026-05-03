@@ -17,6 +17,7 @@ from app.state import (
     STATE_MANUAL_TITLE,
     STATE_SEARCH,
     set_state,
+    title_with_year,
 )
 from app.config import load_settings
 from app.handlers.telegram_utils import (
@@ -293,9 +294,7 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         lib_dict = {"name": existing_lib["name"], "root": existing_lib["root"], "type": existing_lib["type"]}
         context.user_data.pop("state", None)
-        full_title = item.title
-        if item.year:
-            full_title = f"{item.title} ({item.year})"
+        full_title = title_with_year(item.title, item.year)
         context.user_data["pending_title"] = full_title
 
         download_dir = await set_destination(update, context, lib_dict, item.title, item.year, None)
@@ -375,9 +374,7 @@ async def handle_season(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if auto_lib:
         from app.handlers.download import set_destination, queue_download_batch
 
-        full_title = title
-        if year:
-            full_title = f"{title} ({year})"
+        full_title = title_with_year(title, year)
         context.user_data["pending_title"] = full_title
         if kind != "tv":
             context.user_data.pop("pending_season", None)
@@ -427,18 +424,28 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = sel.get("title") or context.user_data.get("pending_title", "Content")
     year = sel.get("year") or context.user_data.get("pending_year")
     kind = sel.get("kind", "movie")
-    season = context.user_data.get("pending_season") if kind == "tv" else None
+    lib_type = library.get("type")
+    season = context.user_data.get("pending_season") if kind == "tv" or lib_type in SERIES_TYPES else None
+
+    if lib_type in SERIES_TYPES and season is None:
+        set_state(context.user_data, STATE_MANUAL_SEASON)
+        await _edit_message(
+            query,
+            f"{title}\n\nType the season number.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Cancel", callback_data="cancel|flow")]]
+            ),
+        )
+        return
 
     # Clear stale season for movies
-    if kind != "tv":
+    if lib_type not in SERIES_TYPES and kind != "tv":
         context.user_data.pop("pending_season", None)
 
     from app.handlers.download import set_destination, queue_download_batch
 
     # Build full title with year for display and naming consistency
-    full_title = title
-    if year:
-        full_title = f"{title} ({year})"
+    full_title = title_with_year(title, year)
     context.user_data["pending_title"] = full_title
 
     download_dir = await set_destination(

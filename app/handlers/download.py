@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import logging
 import os
+import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Callable, Awaitable, Optional
 from app.services.downloader import run_download as _run_tdl
 from app.services.namer import safe_title
 from app.services.extractor import extract_archives
-from app.state import SERIES_TYPES, MOVIE_TYPES, record_recent
+from app.state import SERIES_TYPES, MOVIE_TYPES, record_recent, title_with_year
 from app.config import load_settings
 from telegram.error import RetryAfter, TimedOut
 
@@ -29,6 +30,17 @@ def _next_batch_id(context) -> int:
     return next(counter)
 
 
+def _build_tdl_args(template: str, link: str, download_dir: str, use_group: bool) -> list[str]:
+    """Render the configured tdl command as argv, not shell text."""
+    args = [
+        part.replace("{url}", link).replace("{dir}", download_dir)
+        for part in shlex.split(template)
+    ]
+    if use_group and "--group" not in args:
+        args.append("--group")
+    return args
+
+
 # ── DownloadManager ─────────────────────────────────────────────
 
 @dataclass
@@ -40,6 +52,7 @@ class TaskItem:
     content_id: str
     content_label: str
     content_destination: str
+    batch_id: Optional[int]
     coro_factory: Callable[[], Awaitable[None]]
 
 
@@ -105,6 +118,7 @@ class DownloadManager:
         content_id: str,
         content_label: str,
         content_destination: str,
+        batch_id: Optional[int] = None,
     ) -> tuple[int, int]:
         task_id = next(self._id_gen)
         item = TaskItem(
@@ -115,6 +129,7 @@ class DownloadManager:
             content_id=content_id,
             content_label=content_label,
             content_destination=content_destination,
+            batch_id=batch_id,
             coro_factory=coro_factory,
         )
         self.queue.append(item)
@@ -181,6 +196,39 @@ class DownloadManager:
         if running or before != len(self.queue):
             await self._ensure_worker()
         return running, before - len(self.queue)
+
+    async def batch_ids_for_task(self, chat_id: int, task_id: int) -> set[int]:
+        target = None
+        batch_ids: set[int] = set()
+        if self._current and self._current.chat_id == chat_id and self._current.id == task_id:
+            target = self._current.content_id
+        else:
+            for item in self.queue:
+                if item.chat_id == chat_id and item.id == task_id:
+                    target = item.content_id
+                    break
+        if not target:
+            return batch_ids
+        if (
+            self._current
+            and self._current.chat_id == chat_id
+            and self._current.content_id == target
+            and self._current.batch_id is not None
+        ):
+            batch_ids.add(self._current.batch_id)
+        for item in self.queue:
+            if item.chat_id == chat_id and item.content_id == target and item.batch_id is not None:
+                batch_ids.add(item.batch_id)
+        return batch_ids
+
+    async def batch_ids_for_chat(self, chat_id: int) -> set[int]:
+        batch_ids: set[int] = set()
+        if self._current and self._current.chat_id == chat_id and self._current.batch_id is not None:
+            batch_ids.add(self._current.batch_id)
+        for item in self.queue:
+            if item.chat_id == chat_id and item.batch_id is not None:
+                batch_ids.add(item.batch_id)
+        return batch_ids
 
     async def snapshot(self, chat_id: Optional[int] = None):
         async with self._lock:
@@ -333,10 +381,8 @@ async def queue_download(
 ):
     st = load_settings()
     tdl_template = st.download.tdl_template
-    cmd = tdl_template.replace("{url}", link).replace("{dir}", download_dir)
+    cmd = _build_tdl_args(tdl_template, link, download_dir, use_group)
     tdl_home = st.download.tdl_home
-    if use_group and "--group" not in cmd:
-        cmd = f"{cmd} --group"
     env = os.environ.copy()
     if tdl_home:
         env["TDL_HOME"] = tdl_home
@@ -417,6 +463,17 @@ async def queue_download(
         ok = await _safe_edit(msg, text)
         return ok
 
+    async def _mark_batch_cancelled():
+        if not batch_mode:
+            return
+        batches = context.bot_data.get("download_batches", {})
+        batch = batches.get(batch_id)
+        if not batch:
+            return
+        label = batch.get("label", title_snapshot)
+        await _safe_batch_edit(f"⛔️ Batch cancelled: {label}\n{path_clean}")
+        batches.pop(batch_id, None)
+
     async def _run():
         status_msg = None
         if batch_mode:
@@ -460,7 +517,10 @@ async def queue_download(
             ok = await _run_tdl(cmd, env=env, on_progress=report_progress, register_pid=register_pid, unregister_pid=unregister_pid)
         except asyncio.CancelledError:
             try:
-                await _safe_edit(status_msg, f"⛔️ Cancelled: {human_label}") or await _safe_send(f"⛔️ Cancelled: {human_label}")
+                if batch_mode:
+                    await _mark_batch_cancelled()
+                else:
+                    await _safe_edit(status_msg, f"⛔️ Cancelled: {human_label}") or await _safe_send(f"⛔️ Cancelled: {human_label}")
             except Exception:
                 pass
             return
@@ -564,6 +624,7 @@ async def queue_download(
         content_id=content_id,
         content_label=title,
         content_destination=path_clean,
+        batch_id=batch_id,
     )
     if notify_queued and pos > 1:
         try:
@@ -638,9 +699,7 @@ async def set_destination(
     season: Optional[int],
 ) -> str:
     root = library["root"]
-    base_title = title or "Content"
-    if year:
-        base_title = f"{base_title} ({year})"
+    base_title = title_with_year(title, year)
     folder_name = safe_title(base_title)
     base_dir = os.path.join(root, folder_name)
     download_dir = base_dir
@@ -667,8 +726,7 @@ def find_existing_library(
     """Check if a title+year folder already exists under a series-type library root.
     Returns the library dict if found, None otherwise."""
     base_title = title or "Content"
-    if year:
-        base_title = f"{base_title} ({year})"
+    base_title = title_with_year(base_title, year)
     folder_name = safe_title(base_title)
     for lib in libraries:
         if lib.type not in lib_types:

@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -130,7 +132,16 @@ def _safe_extract_zip(path: Path, dest: Path):
             if not str(member_path).startswith(str(dest_resolved) + os.sep) and member_path != dest_resolved:
                 logging.warning("Zip-slip blocked: %s tries to escape %s", member.filename, dest)
                 continue
-        zf.extractall(dest)
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                logging.warning("Zip symlink blocked: %s", member.filename)
+                continue
+            if member.is_dir():
+                member_path.mkdir(parents=True, exist_ok=True)
+                continue
+            member_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member, "r") as src, open(member_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
 
 
 def _extract_zip(path: Path, dest: Path):
@@ -159,13 +170,17 @@ def _extract_7z(path: Path, dest: Path):
 
 
 def _extract_tar(path: Path, dest: Path):
-    import tarfile
-    try:
-        with tarfile.open(path, "r:*") as tf:
-            tf.extractall(dest, filter="data")
-    except TypeError:
-        with tarfile.open(path, "r:*") as tf:
-            tf.extractall(dest)
+    dest_resolved = dest.resolve()
+    with tarfile.open(path, "r:*") as tf:
+        for member in tf.getmembers():
+            member_path = (dest_resolved / member.name).resolve()
+            if not str(member_path).startswith(str(dest_resolved) + os.sep) and member_path != dest_resolved:
+                logging.warning("Tar path traversal blocked: %s tries to escape %s", member.name, dest)
+                continue
+            if member.issym() or member.islnk() or member.isdev():
+                logging.warning("Tar special member blocked: %s", member.name)
+                continue
+            tf.extract(member, dest)
 
 
 _EXTRACTORS = {

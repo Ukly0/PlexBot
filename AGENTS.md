@@ -103,7 +103,7 @@ Extracted `season` and `year` are stored as `pending_season`/`pending_year` and 
 
 ## User Flow
 
-1. **User sends or forwards a link/file** to the bot (in a group or DM). The bot is added to public groups so `tdl` can resolve download links from forwarded messages.
+1. **User sends or forwards a link/file** to the bot (in an allowed group or admin DM). The bot is added to public groups so `tdl` can resolve download links from forwarded messages.
 2. **Auto-detection**: the bot extracts a candidate title from the filename, forwarded message text, or caption. It searches TMDb automatically and shows the top 3 matches.
 3. **Confirm or search manually**: user picks a result with an inline button, or triggers a manual search if auto-detection was wrong.
 4. **Series only — season**: if the content type is episodic, the bot asks for the season number. It attempts to detect the season from the filename; if it cannot, it shows season buttons.
@@ -116,11 +116,12 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 
 ## Multi-User / Group Behavior
 
-- The bot expects to be added to one or more Telegram **groups**.
+- The bot expects to be added to one or more Telegram **groups** listed in `ALLOWED_CHAT_IDS`.
 - Groups must be **public** (or have a public invite link) for `tdl` to resolve forwarded message download links.
-- Any group member can send links/files — the bot processes them regardless of sender.
+- Any member of an allowed group can send links/files — the bot processes them regardless of sender.
 - State is scoped per-chat via `context.chat_data`. Conversation state (search results, pending selections) is per-user via `context.user_data`.
-- Admin-only features (`/scan`, `/clean_tmp`) respect `ADMIN_CHAT_ID` from `.env`.
+- Admin-only features (`/scan`, `/clean_tmp`) respect `ADMIN_USER_IDS` from `.env`.
+- Updates from unauthorized groups are rejected before normal handlers run, and the bot attempts to leave the group.
 
 ## State Keys
 
@@ -218,7 +219,7 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 
 ### Configuration
 - `config/libraries.yaml` is the single source of truth for library definitions.
-- `.env` holds secrets only: `TELEGRAM_BOT_TOKEN`, `TMDB_API_KEY`, `ADMIN_CHAT_ID`.
+- `.env` holds secrets/access control only: `TELEGRAM_BOT_TOKEN`, `TMDB_API_KEY`, `ALLOWED_CHAT_IDS`, `ADMIN_USER_IDS`.
 - No hardcoded library types — use `type: series` or `type: movie` from the YAML.
 
 ## Known Issues & Gotchas

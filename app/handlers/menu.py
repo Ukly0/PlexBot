@@ -11,7 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.config import load_settings
-from app.state import reset_flow_state
+from app.state import reset_flow_state, title_with_year, title_without_year
 from app.handlers.telegram_utils import (
     delete_safely,
     edit_message_safely,
@@ -26,11 +26,10 @@ def _home_button() -> InlineKeyboardMarkup:
 
 
 def _is_admin(update: Update) -> bool:
-    admin = load_settings().admin_chat_id
-    if not admin:
-        return True
-    chat = update.effective_chat
-    return bool(chat and str(chat.id) == str(admin))
+    user = update.effective_user
+    if not user:
+        return False
+    return str(user.id) in load_settings().admin_user_ids
 
 
 def _shorten(text: str, limit: int = 42) -> str:
@@ -112,7 +111,11 @@ async def cancel_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mgr = context.bot_data.get("dl_manager")
     r, q = 0, 0
     if mgr and hasattr(mgr, "cancel_all"):
+        batch_ids = set()
+        if hasattr(mgr, "batch_ids_for_chat"):
+            batch_ids = await mgr.batch_ids_for_chat(update.effective_chat.id)
         r, q = await mgr.cancel_all(update.effective_chat.id)
+        await _clear_batch_statuses(context, batch_ids)
     msg = "Cancelled flow and all downloads."
     if r or q:
         msg += f" Stopped {r} running and cleared {q} queued."
@@ -169,6 +172,17 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), reply_markup=markup)
 
 
+async def _clear_batch_statuses(context: ContextTypes.DEFAULT_TYPE, batch_ids: set[int]) -> None:
+    batches = context.bot_data.get("download_batches", {})
+    for batch_id in batch_ids:
+        batch = batches.pop(batch_id, None)
+        if batch and batch.get("msg"):
+            await edit_message_safely(
+                batch["msg"],
+                f"⛔️ Batch cancelled: {batch.get('label', 'Content')}",
+            )
+
+
 async def queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await safe_answer(query)
@@ -183,7 +197,12 @@ async def queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mgr = context.bot_data.get("dl_manager")
     if not mgr:
         return
+    batch_ids = set()
+    if hasattr(mgr, "batch_ids_for_task"):
+        batch_ids = await mgr.batch_ids_for_task(update.effective_chat.id, task_id)
     r, q = await mgr.cancel_task(update.effective_chat.id, task_id)
+    if r + q:
+        await _clear_batch_statuses(context, batch_ids)
     note = f"Cancelled {r + q} download(s)." if r + q else "Item not found."
     await query.message.reply_text(note, reply_markup=_home_button())
 
@@ -461,13 +480,12 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Library info not available for this entry.")
             return
 
+        base_title = title_without_year(entry_title, entry_year)
         download_dir = await set_destination(
-            update, context, entry_lib, entry_title, entry_year, entry_season
+            update, context, entry_lib, base_title, entry_year, entry_season
         )
 
-        full_title = entry_title
-        if entry_year:
-            full_title = f"{entry_title} ({entry_year})"
+        full_title = title_with_year(base_title, entry_year)
         context.user_data["pending_title"] = full_title
         context.user_data["pending_year"] = entry_year
         if entry_season:

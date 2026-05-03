@@ -10,9 +10,11 @@ from telegram import Update
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
+    TypeHandler,
     filters,
     ContextTypes,
 )
@@ -136,12 +138,50 @@ async def _text_router(update, context):
     return
 
 
+def _is_authorized_update(update: Update, st) -> bool:
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat:
+        return False
+    if str(chat.id) in st.allowed_chat_ids:
+        return True
+    return bool(
+        chat.type == "private"
+        and user
+        and str(user.id) in st.admin_user_ids
+    )
+
+
+async def _auth_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    st = context.bot_data.get("settings") or load_settings()
+    if _is_authorized_update(update, st):
+        return
+
+    chat = update.effective_chat
+    user = update.effective_user
+    logging.warning(
+        "Rejected unauthorized update chat_id=%s chat_type=%s user_id=%s",
+        getattr(chat, "id", None),
+        getattr(chat, "type", None),
+        getattr(user, "id", None),
+    )
+    if chat and chat.type in {"group", "supergroup"}:
+        try:
+            await context.bot.leave_chat(chat.id)
+            logging.warning("Left unauthorized chat_id=%s", chat.id)
+        except Exception as e:
+            logging.warning("Could not leave unauthorized chat_id=%s: %s", chat.id, e)
+    raise ApplicationHandlerStop
+
+
 def main():
     load_env_file()
     st = load_settings()
     token = st.telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise SystemExit("Missing TELEGRAM_BOT_TOKEN environment variable")
+    if not st.allowed_chat_ids and not st.admin_user_ids:
+        raise SystemExit("Missing ALLOWED_CHAT_IDS or ADMIN_USER_IDS; refusing to run open to all chats")
 
     logging.basicConfig(
         level=logging.INFO,
@@ -154,7 +194,7 @@ def main():
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    app = Application.builder().token(token).concurrent_updates(8).build()
+    app = Application.builder().token(token).build()
 
     # Store settings in bot_data for runtime access
     app.bot_data["settings"] = st
@@ -187,6 +227,8 @@ def main():
                 pass
 
     app.add_error_handler(_error_handler)
+
+    app.add_handler(TypeHandler(Update, _auth_guard), group=-100)
 
     # Commands
     app.add_handler(CommandHandler("start", start))

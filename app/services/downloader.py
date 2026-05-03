@@ -6,8 +6,9 @@ import asyncio
 import logging
 import os
 import re
+import shlex
 import time
-from typing import Callable, Awaitable, Optional
+from typing import Callable, Awaitable, Optional, Sequence
 
 ProgressCb = Callable[[int, str], Awaitable[None]]
 
@@ -33,7 +34,7 @@ async def kill_stale_tdl() -> None:
 
 
 async def run_download(
-    cmd: str,
+    cmd: Sequence[str],
     *,
     env: Optional[dict[str, str]] = None,
     retries: int = 3,
@@ -44,6 +45,8 @@ async def run_download(
     unregister_pid: Optional[Callable[[int], None]] = None,
 ) -> bool:
     """Run tdl download command with retry and optional progress callback."""
+    if isinstance(cmd, str):
+        raise TypeError("run_download requires an argument sequence, not shell text")
 
     proc: Optional[asyncio.subprocess.Process] = None
     last_line = ""
@@ -56,9 +59,10 @@ async def run_download(
         await kill_stale_tdl()
 
         for attempt in range(1, retries + 1):
-            logging.info("Attempt %s of %s: %s", attempt, retries, cmd)
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
+            display_cmd = shlex.join(cmd)
+            logging.info("Attempt %s of %s: %s", attempt, retries, display_cmd)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env or os.environ.copy(),
@@ -75,7 +79,7 @@ async def run_download(
                         proc.stdout.readline(), timeout=idle_timeout
                     )
                 except asyncio.TimeoutError:
-                    logging.error("Download idle for %ss, terminating: %s", idle_timeout, cmd)
+                    logging.error("Download idle for %ss, terminating: %s", idle_timeout, display_cmd)
                     proc.kill()
                     try:
                         await proc.wait()

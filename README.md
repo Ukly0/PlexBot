@@ -35,7 +35,7 @@
 - **Recent destinations** — re-download to the same show/season with one tap
 - **Archive extraction** — automatic RAR/ZIP/7z extraction after download
 - **FIFO download queue** — single-worker with progress bars, per-title cancel
-- **Multi-user groups** — state scoped per chat, any group member can send links
+- **Multi-user groups** — state scoped per authorized chat, any allowed-group member can send links
 - **No database** — in-memory session cache, no SQLite, no ORM
 
 ## Quickstart
@@ -93,7 +93,8 @@ Create `config/.env`:
 ```bash
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF
 TMDB_API_KEY=your_tmdb_bearer_token
-ADMIN_CHAT_ID=123456789          # optional — restricts admin commands
+ALLOWED_CHAT_IDS=-1001234567890  # required — groups/DMs where the bot may run
+ADMIN_USER_IDS=123456789         # required for admin commands and admin DMs
 TDL_HOME=/data/tdl              # optional — tdl session path
 ```
 
@@ -161,7 +162,9 @@ docker compose up -d
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
 | `TMDB_API_KEY` | Yes | TMDb API v3 Bearer token |
-| `ADMIN_CHAT_ID` | No | Your Telegram user ID — restricts admin commands |
+| `ALLOWED_CHAT_IDS` | Yes | Comma/space separated Telegram chat IDs where the bot may run |
+| `ADMIN_USER_IDS` | Yes | Comma/space separated Telegram user IDs allowed to use admin commands |
+| `ADMIN_CHAT_ID` | No | Legacy alias for `ADMIN_USER_IDS` |
 | `TDL_HOME` | No | Path to tdl session directory (default: `~/.tdl`) |
 
 ### Library Types
@@ -265,8 +268,9 @@ Extracted season is pre-filled in the season picker. Year is used in folder name
 
 ## Groups vs DMs
 
-- Works in **both** DMs and groups
-- In groups, any member can send links — state is scoped per chat
+- Works only in chats listed in `ALLOWED_CHAT_IDS`, plus private chats with users in `ADMIN_USER_IDS`
+- In allowed groups, any member can send links — state is scoped per chat
+- If the bot receives an update from an unauthorized group, it logs the chat ID and leaves that group
 - Groups must be **public** (or have a public invite link) for `tdl` to resolve forwarded message download links
 
 ## Project Structure

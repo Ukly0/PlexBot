@@ -21,6 +21,13 @@ def load_env_file(path: str = ".env") -> None:
                 os.environ[key] = val
 
 
+def _parse_id_set(value: Optional[str]) -> set[str]:
+    if not value:
+        return set()
+    normalized = value.replace(",", " ")
+    return {part.strip() for part in normalized.split() if part.strip()}
+
+
 @dataclass
 class Library:
     name: str
@@ -42,6 +49,8 @@ class Settings:
     libraries: list[Library] = field(default_factory=list)
     download: DownloadCfg = field(default_factory=DownloadCfg)
     admin_chat_id: Optional[str] = None
+    admin_user_ids: set[str] = field(default_factory=set)
+    allowed_chat_ids: set[str] = field(default_factory=set)
     telegram_token: Optional[str] = None
 
 
@@ -64,10 +73,17 @@ def load_settings(yaml_path: str = "config/libraries.yaml") -> Settings:
         tdl_home=dl.get("tdl_home", DownloadCfg.tdl_home),
     )
 
+    admin_user_ids = _parse_id_set(os.getenv("ADMIN_USER_IDS"))
+    legacy_admin = os.getenv("ADMIN_CHAT_ID")
+    if legacy_admin:
+        admin_user_ids.update(_parse_id_set(legacy_admin))
+
     settings = Settings(
         libraries=libs,
         download=download,
         admin_chat_id=os.getenv("ADMIN_CHAT_ID"),
+        admin_user_ids=admin_user_ids,
+        allowed_chat_ids=_parse_id_set(os.getenv("ALLOWED_CHAT_IDS")),
         telegram_token=os.getenv("TELEGRAM_BOT_TOKEN"),
     )
     return settings

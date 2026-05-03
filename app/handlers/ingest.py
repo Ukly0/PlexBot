@@ -66,6 +66,8 @@ _RX_AUDIO_CONFIG = re.compile(r"\b\d\.\d\b", re.I)
 _RX_SE_TOKEN = re.compile(r"^S?(\d{1,2})[xEex](\d{1,3})", re.I)
 # S02 standalone as a token (season-only marker)
 _RX_SEASON_TOKEN = re.compile(r"^S(\d{1,2})$", re.I)
+# E05 standalone as a token (episode-only marker; season may come from user/context)
+_RX_EPISODE_TOKEN = re.compile(r"^E(\d{1,3})$", re.I)
 # Year in parentheses: (2024), (2024-text)  — matched BEFORE tokenization
 _RX_PAREN_YEAR = re.compile(r"\((19\d{2}|20\d{2})(?:\s*[-–—]\s*[^)]*)?\)")
 # Remaining parentheses (non-year, already stripped by pre-pass)
@@ -175,6 +177,13 @@ def _parse_filename(filename: str) -> ParsedName:
             season = int(sm.group(1))
             continue
 
+        em = _RX_EPISODE_TOKEN.match(tok)
+        if em:
+            if se_position is None:
+                se_position = i
+            episode = int(em.group(1))
+            continue
+
         # Check resolution tokens
         if _RX_RES_TOKEN.match(tok_lower):
             continue
@@ -256,6 +265,8 @@ def _parse_filename(filename: str) -> ParsedName:
             if _RX_SE_TOKEN.match(tok):
                 continue
             if _RX_SEASON_TOKEN.match(tok):
+                continue
+            if _RX_EPISODE_TOKEN.match(tok):
                 continue
             if _RX_RES_TOKEN.match(tok_lower):
                 continue
