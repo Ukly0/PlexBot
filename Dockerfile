@@ -5,7 +5,7 @@ ARG TDL_VERSION=0.18.4
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN sed -i 's/^deb \(.*\)/deb \1 non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i 's/^Components: main$/Components: main non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         unrar \
