@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 from app.services.tmdb import search as tmdb_search, tmdb_last_error
 from app.handlers.search import build_results_keyboard
 from app.handlers.download import queue_download
+from app.services.telegram_download import _get_file_info, _is_private_chat, _is_too_large
 from app.state import (
     STATE_SEARCH,
     set_state,
@@ -331,6 +332,16 @@ def _extract_season(filename: str) -> Optional[int]:
     return _parse_filename(filename).season
 
 
+def _format_size(size_bytes: Optional[int]) -> str:
+    if not size_bytes:
+        return "unknown"
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}" if unit != "B" else f"{size_bytes} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
 def _get_message_link(message) -> str:
     chat = message.chat
     if chat.username:
@@ -340,13 +351,16 @@ def _get_message_link(message) -> str:
     return f"https://t.me/c/{base}/{message.message_id}"
 
 
-def _add_pending(context, link: str, filename: Optional[str], is_text: bool = False) -> bool:
+def _add_pending(context, link: str, filename: Optional[str], is_text: bool = False, direct_file_id: Optional[str] = None) -> bool:
     """Add to pending queue; returns False if this link is already queued."""
     items: list = context.chat_data.setdefault("pending_links", [])
     for item in items:
         if item.get("link") == link:
             return False
-    items.append({"link": link, "filename": filename, "is_text": is_text})
+    entry = {"link": link, "filename": filename, "is_text": is_text}
+    if direct_file_id:
+        entry["direct_file_id"] = direct_file_id
+    items.append(entry)
     return True
 
 
@@ -422,18 +436,34 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     link = None
     filename = None
     is_text_link = False
+    direct_file_info = None  # (file_id, filename, file_size) for private chat direct download
 
     if message.text and "https://t.me" in message.text:
         link = message.text.strip()
         is_text_link = True
     elif any([message.document, message.video, message.audio, message.photo]):
-        link = _get_message_link(message)
-        if message.document:
-            filename = message.document.file_name
-        elif message.video:
-            filename = message.video.file_name
-        elif message.audio:
-            filename = message.audio.file_name
+        # Private chat: tdl cannot resolve links from private chats.
+        # Use direct Telegram API download instead.
+        if _is_private_chat(message):
+            info = _get_file_info(message)
+            if info:
+                file_id, fname, fsize = info
+                if _is_too_large(message):
+                    await _safe_reply(message, f"⚠️ File too large for direct download ({_format_size(fsize)}). Bot API limit is 20 MB.\nForward this file from a public group instead.")
+                    return
+                direct_file_info = info
+                filename = fname
+                link = f"direct:{file_id}"
+            else:
+                return
+        else:
+            link = _get_message_link(message)
+            if message.document:
+                filename = message.document.file_name
+            elif message.video:
+                filename = message.video.file_name
+            elif message.audio:
+                filename = message.audio.file_name
 
     if not link:
         return
@@ -452,9 +482,14 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             from app.handlers.download import queue_download
 
             display_name = filename or link
+            direct_kwargs = {}
+            if direct_file_info:
+                direct_kwargs["direct_file_id"] = direct_file_info[0]
+                direct_kwargs["direct_filename"] = direct_file_info[1]
             await queue_download(
                 message, context, link, download_dir,
                 title, season, year, display_name, use_group=is_text_link,
+                **direct_kwargs,
             )
             context.chat_data.pop("download_dir", None)
             context.chat_data.pop("active_library", None)
@@ -467,7 +502,10 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
             return
 
         # For series: add to pending
-        _add_pending(context, link, filename, is_text=is_text_link)
+        _add_pending(
+            context, link, filename, is_text=is_text_link,
+            direct_file_id=direct_file_info[0] if direct_file_info else None,
+        )
         pending_count = len(context.chat_data.get("pending_links", []))
         lib_name = active_lib.get("name", "")
         season_label = f" S{season:02d}" if season else ""
@@ -498,7 +536,10 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
     # No destination set — store link in pending queue
-    _add_pending(context, link, filename, is_text=is_text_link)
+    _add_pending(
+        context, link, filename, is_text=is_text_link,
+        direct_file_id=direct_file_info[0] if direct_file_info else None,
+    )
 
     # If auto-detection is already in progress (user is picking metadata),
     # don't start another search — the new link is safely queued.

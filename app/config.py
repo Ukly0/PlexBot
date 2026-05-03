@@ -45,9 +45,18 @@ class DownloadCfg:
 
 
 @dataclass
+class PermissionsCfg:
+    puid: int = 1000
+    pgid: int = 1000
+    dir_mode: int = 0o755
+    file_mode: int = 0o644
+
+
+@dataclass
 class Settings:
     libraries: list[Library] = field(default_factory=list)
     download: DownloadCfg = field(default_factory=DownloadCfg)
+    permissions: PermissionsCfg = field(default_factory=PermissionsCfg)
     admin_chat_id: Optional[str] = None
     admin_user_ids: set[str] = field(default_factory=set)
     allowed_chat_ids: set[str] = field(default_factory=set)
@@ -78,9 +87,29 @@ def load_settings(yaml_path: str = "config/libraries.yaml") -> Settings:
     if legacy_admin:
         admin_user_ids.update(_parse_id_set(legacy_admin))
 
+    def _parse_octal(val: str, default: int) -> int:
+        try:
+            return int(val, 8)
+        except (ValueError, TypeError):
+            return default
+
+    def _parse_int(val: str, default: int) -> int:
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    permissions = PermissionsCfg(
+        puid=_parse_int(os.getenv("PUID", "1000"), 1000),
+        pgid=_parse_int(os.getenv("PGID", "1000"), 1000),
+        dir_mode=_parse_octal(os.getenv("PLEXBOT_DIR_MODE", "755"), 0o755),
+        file_mode=_parse_octal(os.getenv("PLEXBOT_FILE_MODE", "644"), 0o644),
+    )
+
     settings = Settings(
         libraries=libs,
         download=download,
+        permissions=permissions,
         admin_chat_id=os.getenv("ADMIN_CHAT_ID"),
         admin_user_ids=admin_user_ids,
         allowed_chat_ids=_parse_id_set(os.getenv("ALLOWED_CHAT_IDS")),

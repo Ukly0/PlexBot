@@ -1,13 +1,22 @@
 services:
   plexbot:
     build: .
+    image: plexbot:latest
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     env_file:
       - config/.env
-    environment:
-      - TZ=${TZ:-UTC}
     volumes:
       - ./config:/app/config:ro
-      - ./data:/data
-      # Mount your media libraries. Paths must match config/libraries.yaml roots.
-      # Example: /host/path/to/tv:/media/tv
+      - plexbot-data:/data
+      # Mount your media libraries below. Paths must match config/libraries.yaml roots.
+      # Example:
+      # - /your/host/path/tv:/media/tv
+      # - /your/host/path/movies:/media/movies
+      # - /your/host/path/anime:/media/anime
     restart: unless-stopped
+
+volumes:
+  plexbot-data:

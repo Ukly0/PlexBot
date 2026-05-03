@@ -19,11 +19,6 @@ from app.state import SERIES_TYPES, MOVIE_TYPES, record_recent, title_with_year
 from app.config import load_settings
 from telegram.error import RetryAfter, TimedOut
 
-TARGET_UID = 1000
-TARGET_GID = 1000
-DIR_MODE = 0o755
-FILE_MODE = 0o644
-
 
 def _next_batch_id(context) -> int:
     counter = context.bot_data.setdefault("_download_batch_counter", itertools.count(1))
@@ -103,6 +98,8 @@ class DownloadManager:
                 await item.coro_factory()
             except asyncio.CancelledError:
                 raise
+            except Exception:
+                logging.exception("Task %s (chat %s) failed unexpectedly", item.id, item.chat_id)
             finally:
                 async with self._lock:
                     logging.info("Finished task %s (chat %s). Queued: %s", item.id, item.chat_id, len(self.queue))
@@ -300,25 +297,25 @@ def _snapshot_files(path: str) -> set[str]:
     return snap
 
 
-def _apply_permissions(path: str) -> None:
+def _apply_permissions(path: str, puid: int, pgid: int, dir_mode: int, file_mode: int) -> None:
     try:
-        os.chown(path, TARGET_UID, TARGET_GID)
-        os.chmod(path, DIR_MODE)
+        os.chown(path, puid, pgid)
+        os.chmod(path, dir_mode)
     except Exception as e:
         logging.warning("Could not set perms on %s: %s", path, e)
     for root, dirs, files in os.walk(path):
         for d in dirs:
             p = os.path.join(root, d)
             try:
-                os.chown(p, TARGET_UID, TARGET_GID)
-                os.chmod(p, DIR_MODE)
+                os.chown(p, puid, pgid)
+                os.chmod(p, dir_mode)
             except Exception as e:
                 logging.debug("Perms skipped for %s: %s", p, e)
         for f in files:
             p = os.path.join(root, f)
             try:
-                os.chown(p, TARGET_UID, TARGET_GID)
-                os.chmod(p, FILE_MODE)
+                os.chown(p, puid, pgid)
+                os.chmod(p, file_mode)
             except Exception as e:
                 logging.debug("Perms skipped for %s: %s", p, e)
 
@@ -378,10 +375,15 @@ async def queue_download(
     batch_id: Optional[int] = None,
     batch_index: Optional[int] = None,
     batch_total: Optional[int] = None,
+    direct_file_id: Optional[str] = None,
+    direct_filename: Optional[str] = None,
 ):
     st = load_settings()
-    tdl_template = st.download.tdl_template
-    cmd = _build_tdl_args(tdl_template, link, download_dir, use_group)
+    perm = st.permissions
+    is_direct = direct_file_id is not None
+    if not is_direct:
+        tdl_template = st.download.tdl_template
+        cmd = _build_tdl_args(tdl_template, link, download_dir, use_group)
     tdl_home = st.download.tdl_home
     env = os.environ.copy()
     if tdl_home:
@@ -476,13 +478,22 @@ async def queue_download(
 
     async def _run():
         status_msg = None
-        if batch_mode:
-            await _safe_batch_edit(
-                f"⬇️ Batch: {context.bot_data.get('download_batches', {}).get(batch_id, {}).get('label', title_snapshot)}\n"
-                f"Downloading {batch_index}/{batch_total}: {human_label}"
-            )
+        if is_direct:
+            if batch_mode:
+                await _safe_batch_edit(
+                    f"⬇️ Batch: {context.bot_data.get('download_batches', {}).get(batch_id, {}).get('label', title_snapshot)}\n"
+                    f"Processing {batch_index}/{batch_total}: {human_label}"
+                )
+            else:
+                status_msg = await _safe_send(f"▶️ Processing: {human_label}")
         else:
-            status_msg = await _safe_send(f"▶️ Starting: {human_label}")
+            if batch_mode:
+                await _safe_batch_edit(
+                    f"⬇️ Batch: {context.bot_data.get('download_batches', {}).get(batch_id, {}).get('label', title_snapshot)}\n"
+                    f"Downloading {batch_index}/{batch_total}: {human_label}"
+                )
+            else:
+                status_msg = await _safe_send(f"▶️ Starting: {human_label}")
         status_holder["msg"] = status_msg
 
         before_files = _snapshot_files(path_clean)
@@ -511,19 +522,33 @@ async def queue_download(
             else:
                 await _safe_edit(status_msg, f"⬇️ Downloading: {human_label}\n[{bar}] {pct}%")
 
-        try:
-            register_pid = lambda pid: mgr.child_pids.setdefault(message.chat_id, []).append(pid)
-            unregister_pid = lambda pid: mgr.child_pids.get(message.chat_id, []).remove(pid) if pid in mgr.child_pids.get(message.chat_id, []) else None
-            ok = await _run_tdl(cmd, env=env, on_progress=report_progress, register_pid=register_pid, unregister_pid=unregister_pid)
-        except asyncio.CancelledError:
+        if is_direct:
+            from app.services.telegram_download import download_telegram_file
+            dl_filename = direct_filename or "file"
+            dl_path = await download_telegram_file(
+                context.bot, direct_file_id, download_dir, dl_filename
+            )
+            ok = dl_path is not None
+            if not ok:
+                logging.error("Direct download failed for file_id=%s", direct_file_id)
+        else:
+            ok = False
             try:
-                if batch_mode:
-                    await _mark_batch_cancelled()
-                else:
-                    await _safe_edit(status_msg, f"⛔️ Cancelled: {human_label}") or await _safe_send(f"⛔️ Cancelled: {human_label}")
-            except Exception:
-                pass
-            return
+                register_pid = lambda pid: mgr.child_pids.setdefault(message.chat_id, []).append(pid)
+                unregister_pid = lambda pid: mgr.child_pids.get(message.chat_id, []).remove(pid) if pid in mgr.child_pids.get(message.chat_id, []) else None
+                ok = await _run_tdl(cmd, env=env, on_progress=report_progress, register_pid=register_pid, unregister_pid=unregister_pid)
+            except asyncio.CancelledError:
+                try:
+                    if batch_mode:
+                        await _mark_batch_cancelled()
+                    else:
+                        await _safe_edit(status_msg, f"⛔️ Cancelled: {human_label}") or await _safe_send(f"⛔️ Cancelled: {human_label}")
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                logging.error("Download execution failed for %s: %s", human_label, e)
+                ok = False
 
         after_files = _snapshot_files(path_clean)
         new_files = after_files - before_files
@@ -564,7 +589,7 @@ async def queue_download(
                     logging.error("Post-process failed: %s", e)
 
         try:
-            await asyncio.to_thread(_apply_permissions, path_clean)
+            await asyncio.to_thread(_apply_permissions, path_clean, perm.puid, perm.pgid, perm.dir_mode, perm.file_mode)
         except Exception as e:
             logging.warning("Permission fix failed for %s: %s", path_clean, e)
 
@@ -647,11 +672,16 @@ async def queue_download_batch(
         return
     if len(items) == 1:
         item = items[0]
+        direct_kwargs = {}
+        if item.get("direct_file_id"):
+            direct_kwargs["direct_file_id"] = item["direct_file_id"]
+            direct_kwargs["direct_filename"] = item.get("filename")
         await queue_download(
             message, context, item["link"], download_dir,
             title, season_hint, year,
             item.get("filename") or item["link"],
             use_group=item.get("is_text", False),
+            **direct_kwargs,
         )
         return
 
@@ -678,6 +708,10 @@ async def queue_download_batch(
     }
 
     for idx, item in enumerate(items, start=1):
+        direct_kwargs = {}
+        if item.get("direct_file_id"):
+            direct_kwargs["direct_file_id"] = item["direct_file_id"]
+            direct_kwargs["direct_filename"] = item.get("filename")
         await queue_download(
             message, context, item["link"], download_dir,
             title, season_hint, year,
@@ -687,6 +721,7 @@ async def queue_download_batch(
             batch_id=batch_id,
             batch_index=idx,
             batch_total=len(items),
+            **direct_kwargs,
         )
 
 

@@ -1,0 +1,17 @@
+.git
+.DS_Store
+.env
+.env.*
+config/.env
+venv
+.venv
+__pycache__
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+bot.log
+data
+plexbot-demo
+.agents
+skills-lock.json

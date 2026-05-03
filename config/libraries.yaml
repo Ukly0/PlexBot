@@ -6,19 +6,23 @@
 # type: movie   → standalone file, "Title (Year).ext" naming
 #
 # Add or remove entries as needed. Restart the bot after editing.
+#
+# IMPORTANT: root paths are inside the container. Map them via Docker volumes
+# in docker-compose.yml. Example: /media/tv inside the container maps to
+# /your/host/path/tv on the host.
 
 libraries:
   - name: "TV Shows"
     type: series
-    root: /media/storage/data/media/tv
+    root: /media/tv
 
   - name: "Movies"
     type: movie
-    root: /media/storage/data/media/movies
+    root: /media/movies
 
   - name: "Anime"
     type: series
-    root: /media/storage/data/media/anime
+    root: /media/anime
 
 # ── Download settings ───────────────────────────────────────────────
 

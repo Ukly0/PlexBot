@@ -6,8 +6,8 @@ Async Telegram bot for managing a Plex media library. The bot lives in a Telegra
 
 - Python 3.10+, `python-telegram-bot` async API
 - TMDb API v3 (Bearer token auth)
-- `tdl` CLI for Telegram downloads
-- Docker / Docker Compose
+- `tdl` CLI for Telegram downloads (bundled in Docker image)
+- Docker / Docker Compose with `gosu` for privilege drop
 - No database — in-memory session cache only
 
 ## Commands
@@ -28,18 +28,19 @@ app/
 │   ├── menu.py          # /start, /menu, main navigation dashboard
 │   ├── ingest.py        # Link/file intake — auto metadata extraction, flow orchestration
 │   ├── search.py        # TMDb search, result selection, pagination
-│   └── download.py      # Download queue, tdl subprocess, post-process trigger
+│   └── download.py      # Download queue, tdl subprocess, direct Telegram download, post-process
 ├── services/
 │   ├── tmdb.py          # TMDb API client — multi-search, seasons
 │   ├── downloader.py    # tdl subprocess wrapper — progress, retries, locking
+│   ├── telegram_download.py  # Direct Telegram Bot API file download for private chats
 │   ├── extractor.py     # Multipart RAR/ZIP detection and extraction
 │   └── namer.py         # Plex-safe naming, SxxExx parsing, movie naming
 config/
-├── libraries.yaml       # Library definitions (user-editable)
-├── .env.example         # Secrets template
-└── settings.py          # (legacy — migrate to app/config.py)
+├── libraries.yaml       # Library definitions (user-editable, mounted from host)
+├── .env                 # Secrets and permissions (mounted from host)
 docker-compose.yml
 Dockerfile
+entrypoint.sh            # PUID/PGID setup, gosu privilege drop
 requirements.txt
 ```
 
@@ -71,6 +72,7 @@ libraries:
 - `type: series` — content with seasons and episodes. Downloads go into `{root}/{ShowName}/Season {N}/`. Files are renamed to `S{N:02d}E{N:02d} - {Title}.{ext}`.
 - `type: movie` — standalone files. Downloads go into `{root}/{ShowName} ({Year})/`. Files are renamed to `{Title} ({Year}).{ext}`.
 - The `name` is a human-readable label shown in library selection buttons.
+- The `root` paths are **inside the container**. Map them to host paths via Docker volumes in `docker-compose.yml`.
 - Adding a new library is a YAML edit + bot restart. No code changes needed.
 
 ## Plex-Compatible Naming (Critical)
@@ -108,7 +110,7 @@ Extracted `season` and `year` are stored as `pending_season`/`pending_year` and 
 3. **Confirm or search manually**: user picks a result with an inline button, or triggers a manual search if auto-detection was wrong.
 4. **Series only — season**: if the content type is episodic, the bot asks for the season number. It attempts to detect the season from the filename; if it cannot, it shows season buttons.
 5. **Library destination**: user picks which library folder to download into.
-6. **Enqueue → download → post-process**: the bot queues the download. On completion it extracts archives, renames files for Plex, sets permissions (`chown 1000:1000`), and records the destination in the in-memory session cache.
+6. **Enqueue → download → post-process**: the bot queues the download. On completion it extracts archives, renames files for Plex, sets permissions (`chown PUID:PGID`), and records the destination in the in-memory session cache.
 
 ### Session Memory (No Persistence)
 
@@ -180,17 +182,29 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 
 ## Download Pipeline
 
-1. `app/handlers/download.py::queue_download(url, dest_dir, season_hint)` builds the `tdl` command and enqueues a coroutine factory in `DownloadManager`. `queue_download_batch()` wraps multiple items into one compact Telegram status message.
-2. `DownloadManager` processes one task at a time via a single async worker. It is a global singleton stored in `bot_data["dl_manager"]`.
-3. `app/services/downloader.py::run_download()` calls `tdl dl` as an async subprocess, parsing progress from stdout. Constants:
+1. **Link/file detection**: `app/handlers/ingest.py::handle_download_message()` detects the source:
+   - Telegram `t.me` links (text messages) → passed to `tdl` for download
+   - Forwarded files in **public groups** → `t.me` message link generated, passed to `tdl`
+   - Forwarded files in **private chats** → Bot API cannot resolve `t.me` links for private chats, so files are downloaded directly via `app/services/telegram_download.py` (20 MB Bot API limit)
+2. `app/handlers/download.py::queue_download()` builds the `tdl` command and enqueues a coroutine factory in `DownloadManager`. When `direct_file_id` is provided (private chat), skips `tdl` and downloads via Telegram Bot API instead. `queue_download_batch()` wraps multiple items into one compact Telegram status message.
+3. `DownloadManager` processes one task at a time via a single async worker. It is a global singleton stored in `bot_data["dl_manager"]`.
+4. `app/services/downloader.py::run_download()` calls `tdl dl` as an async subprocess, parsing progress from stdout. Constants:
    - Retries: 3 on failure
    - Progress updates: rate-limited to max every 5 seconds and min 2% change
    - Global `TDL_LOCK` (asyncio.Lock) serializes all `tdl` invocations to prevent TDLib database conflicts
-4. After download: `app/services/extractor.py::extract_archives()` detects multipart RAR/ZIP by scanning for `.rar`/`.part1.rar`/`.zip`, extracts, and removes archives.
-5. Series: `app/services/namer.py::bulk_rename()` walks the directory and renames all video files to Plex-compatible SxxExx names.
-6. Movies: `app/services/namer.py::rename_movie_files()` renames to `Title (Year).ext`.
-7. Permissions: `chown 1000:1000` on all files (hardcoded — make configurable in future).
-8. Destination recorded in `bot_data["recent_destinations"]` for quick-add shortcuts.
+5. After download: `app/services/extractor.py::extract_archives()` detects multipart RAR/ZIP by scanning for `.rar`/`.part1.rar`/`.zip`, extracts, and removes archives.
+6. Series: `app/services/namer.py::bulk_rename()` walks the directory and renames all video files to Plex-compatible SxxExx names.
+7. Movies: `app/services/namer.py::rename_movie_files()` renames to `Title (Year).ext`.
+8. Permissions: `_apply_permissions()` sets ownership to `PUID`:`PGID` and modes to `PLEXBOT_DIR_MODE`/`PLEXBOT_FILE_MODE` (all from env vars, defaults: `1000:1000`, `0755`/`0644`).
+9. Destination recorded in `bot_data["recent_destinations"]` for quick-add shortcuts.
+
+### Direct Download (Private Chats)
+
+When a user forwards a file in a private chat (1-on-1 with the bot), `tdl` cannot resolve the message link because `tdl` requires public groups. Instead:
+- `ingest.py` detects `_is_private_chat()` and extracts the `file_id` via `_get_file_info()`
+- If the file exceeds 20 MB (Bot API limit), the bot replies with an error and suggests forwarding from a public group
+- Otherwise, the `file_id` is stored in the pending queue item as `direct_file_id`
+- `download.py::queue_download()` receives `direct_file_id` and `direct_filename`, downloads via `telegram_download.py::download_telegram_file()`, and proceeds with normal post-processing
 
 ## Coding Rules
 
@@ -209,7 +223,8 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 - All library roots come from `config/libraries.yaml`. Never hardcode paths.
 - Every filename and folder written to disk must pass through `app/services/namer.py`.
 - Treat forwarded messages and links as untrusted input.
-- Target ownership: UID 1000, GID 1000 (hardcoded — plan: move to config).
+- Target ownership: configurable via `PUID`/`PGID` env vars (defaults: 1000:1000).
+- File permission modes: configurable via `PLEXBOT_DIR_MODE`/`PLEXBOT_FILE_MODE` (defaults: 0755/0644).
 
 ### Error Handling
 - Never let an unhandled exception crash the bot process.
@@ -219,13 +234,41 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
 
 ### Configuration
 - `config/libraries.yaml` is the single source of truth for library definitions.
-- `.env` holds secrets/access control only: `TELEGRAM_BOT_TOKEN`, `TMDB_API_KEY`, `ALLOWED_CHAT_IDS`, `ADMIN_USER_IDS`.
+- `.env` holds secrets, access control, and permissions: `TELEGRAM_BOT_TOKEN`, `TMDB_API_KEY`, `ALLOWED_CHAT_IDS`, `ADMIN_USER_IDS`, `PUID`, `PGID`, `PLEXBOT_DIR_MODE`, `PLEXBOT_FILE_MODE`.
 - No hardcoded library types — use `type: series` or `type: movie` from the YAML.
+- No hardcoded UIDs/GIDs — use `PUID`/`PGID` env vars, adjusted at container start by `entrypoint.sh`.
+
+## Docker Deployment
+
+The Docker image includes `tdl` and `gosu`. The entrypoint (`entrypoint.sh`) runs as root, adjusts the `plexbot` user's UID/GID to match `PUID`/`PGID`, then drops privileges via `gosu`.
+
+```yaml
+# docker-compose.yml
+services:
+  plexbot:
+    build: .
+    image: plexbot:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+    env_file:
+      - config/.env
+    volumes:
+      - ./config:/app/config:ro
+      - plexbot-data:/data
+      - /your/host/tv:/media/tv
+      - /your/host/movies:/media/movies
+      - /your/host/anime:/media/anime
+    restart: unless-stopped
+```
+
+Library root paths in `libraries.yaml` must match the container-side mount points.
 
 ## Known Issues & Gotchas
 
 1. **`pkill -u` is Linux-specific** — `kill_stale_tdl()` in downloader won't work on macOS. Fine in Docker, but document in code.
-2. **Hardcoded UID/GID** — `TARGET_UID=1000`, `TARGET_GID=1000`. Should be configurable.
+2. ~~**Hardcoded UID/GID**~~ — Fixed. `PUID`/`PGID` env vars configurable, applied at container start via `entrypoint.sh`.
 3. ~~**`safe_title` does not normalize Unicode**~~ — Fixed. `_ascii_safe()` now applies NFKD normalization before stripping non-ASCII. Accents and `ñ` → `n` are handled correctly.
 4. **Group must be public** — `tdl` cannot resolve download links from private groups. The README and setup docs must make this clear.
 5. **AGENTS.md was in `.gitignore`** — removed. Commit this file.
