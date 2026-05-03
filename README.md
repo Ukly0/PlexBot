@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">PlexBot</h1>
+  <img src="./assets/Logo.png" alt="PlexBot" width="320" />
   <p align="center">
     <em>Forward a Telegram link → it lands in Plex, renamed and organized.</em>
   </p>
@@ -15,10 +15,7 @@
 ---
 
 <p align="center">
-  <img src="./assets/search.png" alt="TMDb search" width="220" />
-  <img src="./assets/queue.png" alt="Queue view" width="220" />
-  <img src="./assets/realtime.png" alt="Download progress" width="220" />
-  <img src="./assets/menu.png" alt="Main menu" width="220" />
+  <img src="./assets/example.gif" alt="PlexBot demo" width="860" />
 </p>
 
 ---
