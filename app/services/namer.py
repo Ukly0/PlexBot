@@ -1,0 +1,146 @@
+"""Plex-safe filename sanitization, SxxExx parsing, and bulk renaming.
+
+CRITICAL: Every filename/folder written to disk MUST go through these helpers.
+Plex requires ASCII-only names: no accents, no ñ, no special chars.
+"""
+
+import logging
+import re
+import unicodedata
+from pathlib import Path
+from typing import Optional
+
+RX_SE = re.compile(r"S?(\d{1,2})[xEex](\d{1,3})(?:[Ee\-](\d{1,3}))?", re.I)
+RX_E_ONLY = re.compile(r"(?<![A-Za-z])E(\d{1,3})(?!\d)", re.I)
+RX_YEAR_GUARD = re.compile(r"(19\d{2}|20\d{2})")
+_RES_HEIGHTS = {"480", "576", "720", "108", "360"}
+RX_THREE = re.compile(r"(?<!\d)(\d)(\d{2})(?!\d)")
+
+VIDEO_EXT = {
+    ".mkv", ".mp4", ".avi", ".mov", ".ts", ".m4v",
+    ".webm", ".flv", ".wmv", ".mpg", ".mpeg", ".m2ts", ".mts",
+}
+INVALID_FS_CHARS = set('<>:"/\\|?*')
+
+
+def _ascii_safe(text: str) -> str:
+    """Normalize to closest ASCII: ñ→n, é→e, etc."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return nfkd.encode("ascii", "ignore").decode("ascii")
+
+
+def safe_title(title: str) -> str:
+    """
+    Sanitize a title for Plex filesystem use:
+    - Normalize unicode (accents, ñ → ASCII equivalents)
+    - Remove invalid characters
+    - Collapse whitespace
+    """
+    if not title:
+        return "Content"
+    cleaned = _ascii_safe(title)
+    cleaned = "".join(" " if ch in INVALID_FS_CHARS else ch for ch in cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(".")
+    return cleaned or "Content"
+
+
+def parse_season_episode(
+    name: str, season_hint: Optional[int] = None
+) -> tuple[Optional[int], Optional[int]]:
+    m = RX_SE.search(name)
+    if m:
+        s, e = int(m.group(1)), int(m.group(2))
+        return s, e
+    m = RX_E_ONLY.search(name)
+    if m and season_hint is not None:
+        return season_hint, int(m.group(1))
+    m = RX_THREE.search(name)
+    if m:
+        s, e = int(m.group(1)), int(m.group(2))
+        if f"{s}{e}" not in _RES_HEIGHTS:
+            return s, e
+    return None, None
+
+
+def target_name(
+    title: str, season: Optional[int], episode: Optional[int], ext: str
+) -> Optional[str]:
+    if season is None or episode is None:
+        return None
+    return f"S{season:02d}E{episode:02d} - {title}{ext}"
+
+
+def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
+    season, episode = parse_season_episode(path.name, season_hint)
+    ext = path.suffix.lower()
+    if ext not in VIDEO_EXT:
+        return path
+
+    if season is not None and episode is not None:
+        new_name = f"S{season:02d}E{episode:02d} - {title}{ext}"
+    elif season_hint is not None and episode is not None:
+        new_name = f"S{season_hint:02d}E{episode:02d} - {title}{ext}"
+    else:
+        logging.warning("rename_video: cannot determine season/episode for %s (season=%s, episode=%s, hint=%s), keeping original", path.name, season, episode, season_hint)
+        return path
+
+    target = path.with_name(new_name)
+    if target == path:
+        return path
+    if target.exists():
+        base = target.stem
+        suffix = target.suffix
+        n = 1
+        while target.exists():
+            target = path.with_name(f"{base}-dup{n}{suffix}")
+            n += 1
+    logging.info("rename_video: %s -> %s", path.name, target.name)
+    path.rename(target)
+    return target
+
+
+def bulk_rename(root: Path, title: str, season_hint: Optional[int]) -> None:
+    logging.info("bulk_rename: root=%s title=%s season_hint=%s", root, title, season_hint)
+    video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
+    logging.info("bulk_rename: found %d video files", len(video_files))
+    for p in video_files:
+        original = p.name
+        try:
+            result = rename_video(p, title, season_hint)
+            if result == p:
+                logging.info("bulk_rename: skipped %s (no rename needed)", original)
+        except Exception as e:
+            logging.error("bulk_rename: failed to rename %s: %s", original, e)
+
+
+def _movie_title_with_year(title: str, year: Optional[int]) -> str:
+    sanitized = safe_title(title)
+    sanitized = re.sub(r"\s*\(\d{4}\)$", "", sanitized).strip()
+    if year:
+        sanitized = f"{sanitized} ({year})"
+    return sanitized or "Content"
+
+
+def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:
+    target_base = _movie_title_with_year(title, year)
+    logging.info("rename_movie_files: root=%s title=%s year=%s target_base=%s", root, title, year, target_base)
+    video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
+    logging.info("rename_movie_files: found %d video files", len(video_files))
+    for p in video_files:
+        original = p.name
+        try:
+            target = p.with_name(f"{target_base}{p.suffix.lower()}")
+            if target == p:
+                logging.info("rename_movie_files: skipped %s (already named)", original)
+                continue
+            if target.exists():
+                base = target.stem
+                suffix = target.suffix
+                n = 1
+                while target.exists():
+                    target = p.with_name(f"{base}-dup{n}{suffix}")
+                    n += 1
+            logging.info("rename_movie_files: %s -> %s", original, target.name)
+            p.rename(target)
+        except Exception as e:
+            logging.error("rename_movie_files: failed to rename %s: %s", original, e)

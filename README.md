@@ -1,115 +1,305 @@
-# PlexBot
-
-Telegram bot that pulls media from Telegram messages using [TDL](https://github.com/iyear/tdl), matches titles with TMDb, and stores everything in a Plex-friendly library layout.
-
 <p align="center">
-  <strong>⚠️ Notice — Under development</strong><br>
-  <em>This bot is currently under active development. It may contain bugs, unexpected behavior, or breaking changes. Use at your own risk and please report issues in the Issues section.</em>
+  <img src="./assets/Logo.png" alt="PlexBot" width="320" />
+  <p align="center">
+    <em>Forward a Telegram link → it lands in Plex, renamed and organized.</em>
+  </p>
+  <p align="center">
+    <a href="#quickstart"><strong>Quick Start</strong></a> ·
+    <a href="#features">Features</a> ·
+    <a href="#configuration">Configuration</a> ·
+    <a href="#docker">Docker</a> ·
+    <a href="#how-it-works">How It Works</a>
+  </p>
 </p>
 
+---
+
 <p align="center">
-  <img src="./assets/search.png" alt="Feature 1" width="300" />
-  <img src="./assets/queue.png" alt="Feature 2" width="300" />
-  <img src="./assets/realtime.png" alt="Feature 3" width="300" />
-  <img src="./assets/menu.png" alt="Feature 4" width="300" />
+  <img src="./assets/example.gif" alt="PlexBot demo" width="860" />
 </p>
 
+---
+
+**PlexBot** is an async Telegram bot that downloads media from Telegram groups, automatically detects titles and metadata, matches them against TMDb, renames files for Plex compatibility (ASCII-only, SxxExx format), and places them into the correct library folders — all with zero manual renaming.
 
 ## Features
-- Accepts Telegram links or forwarded media (documents/videos/photos/audio).
-- TMDb lookup + manual entry to classify Movies/Series/Anime/Docuseries/Documentary.
-- Auto-creates destination folders per title/season; Plex-style renaming and permissions.
-- Global FIFO queue (single worker) with progress updates; queue view and per-title cancel.
-- Post-processing: archive extraction (zip/rar) and file renaming for Plex.
-- Library scanner + DB search/stats helpers.
-- Auto-creates DB schema and seeds libraries from config if missing.
 
-## Quickstart (local)
-1. Install Python deps:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Install TDL (one of):
-   ```bash
-   go install github.com/iyear/tdl-telegram/cmd/tdl@latest
-   # or download a release tarball and put `tdl` on PATH
-   ```
-   Log in once (stored in `TDL_HOME`):
-   ```bash
-   tdl login
-   ```
-3. Configure libraries: edit `config/libraries.yaml` with your library roots.
-4. Set environment (or `.env`):
-   - `TELEGRAM_BOT_TOKEN` (required)
-   - `TMDB_API_KEY` (required)
-   - `PLEX_DB_URL` (optional, default `sqlite:///plexbot.db`)
-   - `TDL_HOME` (recommended, persistent path for TDL session)
-5. Run the bot:
-   ```bash
-   python -m app.telegram.main
-   ```
-   Send `/start` to your bot.
+- **Smart filename parsing** — extracts title, season, episode, and year from messy scene-release names
+- **TMDb auto-detection** — searches TMDb automatically and shows the top results with posters
+- **Plex-compatible renaming** — `S01E02 - Title.mkv` for series, `Title (Year).mkv` for movies, ASCII-only
+- **Library auto-detection** — if a show already has a folder, skips library selection
+- **Batch downloads** — forward multiple files, confirm once, all queue up
+- **Recent destinations** — re-download to the same show/season with one tap
+- **Archive extraction** — automatic RAR/ZIP/7z extraction after download
+- **FIFO download queue** — single-worker with progress bars, per-title cancel
+- **Multi-user groups** — state scoped per authorized chat, any allowed-group member can send links
+- **No database** — in-memory session cache, no SQLite, no ORM
 
-## Configuration
-- `config/libraries.yaml`: define libraries and optional download overrides (template/home).
-- Environment variables:
-  - `TELEGRAM_BOT_TOKEN`: Telegram bot token.
-- `TMDB_API_KEY`: TMDb API key.
-- `PLEX_DB_URL`: DB URL (SQLite by default).
-- `TDL_HOME`: where TDL stores its session (persist this).
-- Category buttons: customize labels in `config/libraries.yaml` under `ui.categories`.
-- The bot auto-creates tables and seeds libraries from `config/libraries.yaml` if empty.
+## Quickstart
 
-## Commands
-- `/start` — help.
-- `/menu` — button dashboard for add content, inbox, queue, and recently added.
-- `/search` — TMDb search + destination setup.
-- `/season <n>` — switch active season for a selected series/docuseries.
-- `/queue` — show running/pending downloads; cancel by title.
-- `/cancel` — cancel current flow + running download for this chat.
-- `/cancel_all` — cancel flow + running and queued downloads for this chat.
-- `/clean_tmp` — remove temp auto-download folders.
+### 1. Create a Telegram Bot
+
+Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot` → copy the token.
+
+### 2. Get a TMDb API Key
+
+Register at [https://www.themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) → request an API key (free).
+
+### 3. Install & authenticate `tdl`
+
+```bash
+# macOS
+brew install iyear/tap/tdl
+
+# Linux
+curl -Lo /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/download/tdl_Linux_64bit.tar.gz
+tar -xzf /usr/local/bin/tdl_Linux_64bit.tar.gz -C /usr/local/bin tdl
+
+# Authenticate (one time — stores session)
+tdl login -T phone
+```
+
+> **Important:** `tdl` requires a one-time login with your Telegram phone number. The session is stored in `TDL_HOME` (default `~/.tdl`). In Docker, mount this as a volume so it persists.
+
+### 4. Configure libraries
+
+Edit `config/libraries.yaml`:
+
+```yaml
+libraries:
+  - name: "TV Shows"
+    type: series
+    root: /media/tv
+
+  - name: "Movies"
+    type: movie
+    root: /media/movies
+
+  - name: "Anime"
+    type: series
+    root: /media/anime
+```
+
+- `type: series` → episodic, SxxExx naming, asks for season number
+- `type: movie` → standalone, `Title (Year).ext` naming
+
+### 5. Set environment variables
+
+Create `config/.env`:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF
+TMDB_API_KEY=your_tmdb_bearer_token
+ALLOWED_CHAT_IDS=-1001234567890  # required — groups/DMs where the bot may run
+ADMIN_USER_IDS=123456789         # required for admin commands and admin DMs
+TDL_HOME=/data/tdl              # optional — tdl session path
+```
+
+### 6. Run
+
+```bash
+pip install -r requirements.txt
+python -m app.bot
+```
+
+Or use Docker (see [Docker](#docker) section).
 
 ## Docker
-- `Dockerfile` + `docker-compose.yml` provided. Configure env in `.env` and library roots via volume mappings to match `config/libraries.yaml`.
-- Mount `config/` as read-only, `./data` for DB + TDL session (`TDL_HOME`), and your media roots for each library type.
-- Example: update `MEDIA_ROOT_*` vars in `.env` to point to host folders, then run `docker compose up -d`.
-- Place a `tdl` binary on PATH inside the container (e.g., bind-mount to `/usr/local/bin/tdl` or drop it into `./bin` before building).
 
-## Workflows and behaviors
-### Download flow
-1) `/search` → pick title (TMDb or manual) → choose category → season (if series).  
-2) Destination is set; send a Telegram link or attach a file. The item is queued.  
-3) Queue is grouped per title: cancelling one entry in `/queue` cancels that title’s running + queued tasks.
+```yaml
+# docker-compose.yml
+services:
+  plexbot:
+    build: .
+    env_file: config/.env
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/data
+      - /your/media/tv:/media/tv
+      - /your/media/movies:/media/movies
+      - /your/media/anime:/media/anime
+    restart: unless-stopped
+```
 
-### Direct drop without /search
-- If you send a link/file without a destination, the bot prompts TMDb/manual + category selection first.
+**tdl must be available inside the container.** Either:
 
-### Queue semantics
-- Single global worker (FIFO).  
-- `/queue` groups by content/title; cancel removes all pending tasks for that title (and stops it if running).  
-- Progress is rate-limited; grouped downloads use best-effort progress estimation.
+```dockerfile
+# Option A: Download tdl during build (add to Dockerfile)
+RUN curl -Lo /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/download/tdl_Linux_64bit.tar.gz \
+    && tar -xzf /usr/local/bin/tdl_Linux_64bit.tar.gz -C /usr/local/bin tdl \
+    && rm /usr/local/bin/tdl_Linux_64bit.tar.gz
+```
 
-### Post-processing
-- Archives (zip/rar/volumes) are extracted in place; video files renamed to Plex-friendly names.  
-- Ownership/permissions are set to UID 1000 / GID 1000 (tweak in code if needed).
+```bash
+# Option B: Bind-mount the host binary
+# Add to docker-compose.yml volumes:
+#   - /usr/local/bin/tdl:/usr/local/bin/tdl:ro
+```
 
-### Library scan and DB
-- `/scan` scans configured libraries and ingests Show/Season/Episode records.  
-- `/dbsearch` and `/dbstats` query the same DB; useful after `/scan` or downloads.  
-- CLI equivalents: `python -m cli.manage scan --all`, `python -m cli.manage stats`, etc.
+**Authenticate tdl inside the container once:**
 
-## Maintenance CLI (optional)
-- `python -m cli.manage init-db` — create tables (usually auto-created by the bot).
-- `python -m cli.manage seed-libs` — seed libraries from `config/libraries.yaml`.
-- `python -m cli.manage libs` — list libraries.
-- `python -m cli.manage scan --all` — scan all libraries.
-- `python -m cli.manage stats` — DB metrics.
+```bash
+docker compose run --rm plexbot tdl login -T phone
+# Session persists in ./data/tdl
+```
 
-## Groups vs direct messages
-- Works in DMs or groups. In groups, commands work the same; downloads/queues are per chat ID.  
-- Ensure the bot can read messages/attachments in the group.
+Then:
 
-## TDL notes
-- Requires one-time `tdl login`; session stored in `TDL_HOME` (persist/mount it if containerized).  
-- TDL command template is configurable via `config/libraries.yaml` (`download.tdl_template`) and `TDL_HOME`.
+```bash
+docker compose up -d
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
+| `TMDB_API_KEY` | Yes | TMDb API v3 Bearer token |
+| `ALLOWED_CHAT_IDS` | Yes | Comma/space separated Telegram chat IDs where the bot may run |
+| `ADMIN_USER_IDS` | Yes | Comma/space separated Telegram user IDs allowed to use admin commands |
+| `ADMIN_CHAT_ID` | No | Legacy alias for `ADMIN_USER_IDS` |
+| `TDL_HOME` | No | Path to tdl session directory (default: `~/.tdl`) |
+
+### Library Types
+
+| Type | Behavior | Naming | Folder Structure |
+|---|---|---|---|
+| `series` | Asks for season number | `S01E02 - Title.mkv` | `Show (Year)/Season 01/` |
+| `movie` | Auto-queues immediately | `Title (Year).mkv` | `Title (Year)/` |
+
+### Download Settings
+
+In `config/libraries.yaml`:
+
+```yaml
+download:
+  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 --template "{{ .FileName }}"'
+  # tdl_home: /data/tdl  # optional: separate session directory
+```
+
+- `{url}` and `{dir}` are replaced at runtime
+- `--template "{{ .FileName }}"` preserves original filenames (avoids Go template conflicts)
+- `-t 16` = 16 threads, `-l 9` = log level 9 (progress)
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    User sends link/file                  │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  Filename parsing    │
+              │  "Show.S01E02.      │
+              │   1080p.WEB-DL.mkv" │
+              │       ↓             │
+              │  Title: "Show"      │
+              │  Season: 1          │
+              │  Episode: 2         │
+              └──────────┬──────────┘
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  TMDb auto-search   │
+              │  → Top 3 results    │
+              │  → Poster images    │
+              └──────────┬──────────┘
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+              ▼                     ▼
+         ┌─────────┐         ┌──────────┐
+         │  Series  │         │  Movie   │
+         │          │         │          │
+         │ Pick     │         │ Auto-    │
+         │ season   │         │ queue    │
+         └────┬─────┘         └────┬─────┘
+              │                    │
+              ▼                    ▼
+         ┌──────────────────────────────┐
+         │      Download via tdl        │
+         │  (FIFO queue, progress bar)  │
+         └──────────────┬───────────────┘
+                        │
+                        ▼
+         ┌──────────────────────────────┐
+         │      Post-processing          │
+         │  1. Extract archives (RAR/ZIP)│
+         │  2. Rename for Plex            │
+         │  3. Set permissions (1000:1000)│
+         └──────────────────────────────┘
+```
+
+### Filename Parsing
+
+PlexBot detects metadata from messy filenames:
+
+| Input | Title | Season | Year |
+|---|---|---|---|
+| `Breaking.Bad.S01E02.1080p.WEB-DL.x264.mkv` | Breaking Bad | 1 | — |
+| `Euphoria.(2019).S03E05.1080p.WEB-DL.mkv` | Euphoria | 3 | 2019 |
+| `Oppenheimer.(2023).1080p.WEB-DL.mkv` | Oppenheimer | — | 2023 |
+| `Te van a matar (2026) by kowalski&xusman` | Te van a matar | — | 2026 |
+| `Greenland 2 (2026) UHD BluRay REMUX 2160p` | Greenland 2 | — | 2026 |
+
+Extracted season is pre-filled in the season picker. Year is used in folder names. All SxxExx patterns, resolution tags, codec names, language codes, and release group suffixes are stripped before TMDb search.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `/start` | Show main menu |
+| `/menu` | Return to dashboard |
+| `/search` | Manual TMDb search |
+| `/queue` | View running/pending downloads |
+| `/cancel` | Cancel current flow + running download |
+| `/cancel_all` | Cancel everything for this chat |
+| `/clean_tmp` | Remove temp download folders (admin only) |
+
+## Bot Commands
+
+## Groups vs DMs
+
+- Works only in chats listed in `ALLOWED_CHAT_IDS`, plus private chats with users in `ADMIN_USER_IDS`
+- In allowed groups, any member can send links — state is scoped per chat
+- If the bot receives an update from an unauthorized group, it logs the chat ID and leaves that group
+- Groups must be **public** (or have a public invite link) for `tdl` to resolve forwarded message download links
+
+## Project Structure
+
+```
+app/
+├── bot.py               # Entry point — handler registration
+├── config.py            # Libraries YAML + .env loader
+├── state.py             # Conversation state constants + reset
+├── handlers/
+│   ├── ingest.py         # Link/file intake — auto metadata, batch handling
+│   ├── search.py         # TMDb search, season/library selection
+│   ├── menu.py           # /start, /menu, dashboard, queue view
+│   └── download.py       # Download queue, tdl subprocess, post-process
+└── services/
+    ├── tmdb.py           # TMDb API client
+    ├── downloader.py     # tdl subprocess wrapper — progress, retries
+    ├── extractor.py      # RAR/ZIP/7z detection and extraction
+    └── namer.py          # Plex-safe naming — ASCII, SxxExx, collision handling
+
+config/
+└── libraries.yaml        # Library definitions (user-editable)
+```
+
+## Limitations
+
+- **No persistence** — in-memory state resets on restart (download queue, recent destinations, conversation state)
+- **Single download worker** — downloads are sequential (one `tdl` at a time to avoid TDLib session conflicts)
+- **UID/GID hardcoded** — files are created with `1000:1000` ownership; make configurable in `config/libraries.yaml` if needed
+- **Public groups only** — `tdl` cannot resolve download links from private Telegram groups
+- **tdl required** — must be installed and authenticated separately
+
+## License
+
+MIT
