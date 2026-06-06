@@ -1,0 +1,17 @@
+libraries:
+  - name: "TV Shows"
+    type: series
+    root: /media/tv
+
+  - name: "Movies"
+    type: movie
+    root: /media/movies
+
+  - name: "Anime"
+    type: series
+    root: /media/anime
+
+download:
+  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0
+    --template "{{ .FileName }}"'
+  tdl_home: /data/tdl

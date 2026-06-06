@@ -10,6 +10,11 @@
     <a href="#docker">Docker</a> ·
     <a href="#how-it-works">How It Works</a>
   </p>
+  <p align="center">
+    <a href="https://github.com/Ukly0/telegram-to-plex/pkgs/container/plexbot">
+      <img src="https://img.shields.io/badge/ghcr.io-pull-blue?logo=docker" alt="Docker image" />
+    </a>
+  </p>
 </p>
 
 ---
@@ -37,123 +42,118 @@
 
 ## Quickstart
 
-### 1. Create a Telegram Bot
+### Option A: One-liner (Recommended)
+
+```bash
+git clone https://github.com/Ukly0/telegram-to-plex.git plexbot
+cd plexbot
+./setup.sh
+```
+
+The script will ask for your credentials, generate config files, pull the Docker image, and start the bot.
+
+After setup, authenticate `tdl`:
+
+```bash
+docker exec -it -u plexbot -e TDL_HOME=/data/tdl $(docker compose ps -q plexbot) tdl login -T qr
+```
+
+### Option B: Manual setup
+
+<details>
+<summary>Click to expand</summary>
+
+#### 1. Create a Telegram Bot
 
 Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot` → copy the token.
 
-### 2. Get a TMDb API Key
+#### 2. Get a TMDb API Key
 
 Register at [https://www.themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) → request an API key (free).
 
-### 3. Install & authenticate `tdl`
+#### 3. Configure
 
 ```bash
-# macOS
-brew install iyear/tap/tdl
-
-# Linux
-curl -Lo /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/download/tdl_Linux_64bit.tar.gz
-tar -xzf /usr/local/bin/tdl_Linux_64bit.tar.gz -C /usr/local/bin tdl
-
-# Authenticate (one time — stores session)
-tdl login -T phone
+git clone https://github.com/Ukly0/telegram-to-plex.git plexbot
+cd plexbot
+cp config/.env.example config/.env
+cp config/libraries.yaml.example config/libraries.yaml
 ```
 
-> **Important:** `tdl` requires a one-time login with your Telegram phone number. The session is stored in `TDL_HOME` (default `~/.tdl`). In Docker, mount this as a volume so it persists.
-
-### 4. Configure libraries
-
-Edit `config/libraries.yaml`:
-
-```yaml
-libraries:
-  - name: "TV Shows"
-    type: series
-    root: /media/tv
-
-  - name: "Movies"
-    type: movie
-    root: /media/movies
-
-  - name: "Anime"
-    type: series
-    root: /media/anime
-```
-
-- `type: series` → episodic, SxxExx naming, asks for season number
-- `type: movie` → standalone, `Title (Year).ext` naming
-
-### 5. Set environment variables
-
-Create `config/.env`:
+Edit `config/.env` with your credentials:
 
 ```bash
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF
 TMDB_API_KEY=your_tmdb_bearer_token
-ALLOWED_CHAT_IDS=-1001234567890  # required — groups/DMs where the bot may run
-ADMIN_USER_IDS=123456789         # required for admin commands and admin DMs
-TDL_HOME=/data/tdl              # optional — tdl session path
+ADMIN_USER_IDS=123456789
+ALLOWED_CHAT_IDS=-1001234567890
 ```
 
-### 6. Run
-
-```bash
-pip install -r requirements.txt
-python -m app.bot
-```
-
-Or use Docker (see [Docker](#docker) section).
-
-## Docker
+Edit `docker-compose.yml` to mount your media paths (or create `docker-compose.override.yml`):
 
 ```yaml
-# docker-compose.yml
 services:
   plexbot:
-    build: .
-    env_file: config/.env
-    environment:
-      - TZ=${TZ:-UTC}
     volumes:
-      - ./config:/app/config:ro
-      - ./data:/data
-      - /your/media/tv:/media/tv
-      - /your/media/movies:/media/movies
-      - /your/media/anime:/media/anime
-    restart: unless-stopped
+      - /your/host/tv:/media/tv
+      - /your/host/movies:/media/movies
+      - /your/host/anime:/media/anime
 ```
 
-**tdl must be available inside the container.** Either:
-
-```dockerfile
-# Option A: Download tdl during build (add to Dockerfile)
-RUN curl -Lo /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/download/tdl_Linux_64bit.tar.gz \
-    && tar -xzf /usr/local/bin/tdl_Linux_64bit.tar.gz -C /usr/local/bin tdl \
-    && rm /usr/local/bin/tdl_Linux_64bit.tar.gz
-```
-
-```bash
-# Option B: Bind-mount the host binary
-# Add to docker-compose.yml volumes:
-#   - /usr/local/bin/tdl:/usr/local/bin/tdl:ro
-```
-
-**Authenticate tdl inside the container (one time — session persists in `./data/tdl`):**
-
-```bash
-# With docker compose
-docker compose run --rm -u plexbot -e TDL_HOME=/data/tdl plexbot tdl login -T qr
-
-# Or on a running container
-docker exec -it -u plexbot -e TDL_HOME=/data/tdl <container_name> tdl login -T qr
-```
-
-> **Important:** The bot runs as user `plexbot` and uses `TDL_HOME=/data/tdl`. If you run `tdl login` as root (the default for `docker exec`), the session is saved for the wrong user and downloads will fail with `not authorized`.
-
-Then:
+#### 4. Launch
 
 ```bash
 docker compose up -d
+```
+
+#### 5. Authenticate tdl
+
+```bash
+docker exec -it -u plexbot -e TDL_HOME=/data/tdl $(docker compose ps -q plexbot) tdl login -T qr
+```
+
+</details>
+
+### Important: Disable Group Privacy
+
+In [@BotFather](https://t.me/BotFather): `/mybots` → your bot → **Bot Settings** → **Group Privacy** → **Turn off**
+
+Then remove and re-add the bot to your group. Without this, the bot cannot see forwarded messages/files.
+
+### How to find your IDs
+
+| Value | How to get it |
+|---|---|
+| Admin User ID | Message [@userinfobot](https://t.me/userinfobot) on Telegram |
+| Group Chat ID | Add [@RawDataBot](https://t.me/RawDataBot) to your group, it will reply with the chat ID, then remove it |
+
+## Docker
+
+The prebuilt image is published at `ghcr.io/ukly0/plexbot:latest` and is pulled automatically by `docker compose up`.
+
+To build locally instead:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+### Volumes
+
+| Path | Purpose |
+|---|---|
+| `./config:/app/config:ro` | Bot configuration (`.env`, `libraries.yaml`) |
+| `plexbot-data:/data` | tdl session (authentication persists here) |
+| `/your/media/tv:/media/tv` | Your Plex TV library |
+| `/your/media/movies:/media/movies` | Your Plex Movies library |
+| `/your/media/anime:/media/anime` | Your Plex Anime library |
+
+### Re-authenticating tdl
+
+If downloads fail with `not authorized`, re-login:
+
+```bash
+docker exec -it -u plexbot -e TDL_HOME=/data/tdl $(docker compose ps -q plexbot) tdl login -T qr
 ```
 
 ## Configuration
@@ -266,8 +266,6 @@ Extracted season is pre-filled in the season picker. Year is used in folder name
 | `/cancel_all` | Cancel everything for this chat |
 | `/clean_tmp` | Remove temp download folders (admin only) |
 
-## Bot Commands
-
 ## Groups vs DMs
 
 - Works only in chats listed in `ALLOWED_CHAT_IDS`, plus private chats with users in `ADMIN_USER_IDS`
@@ -301,9 +299,7 @@ config/
 
 - **No persistence** — in-memory state resets on restart (download queue, recent destinations, conversation state)
 - **Single download worker** — downloads are sequential (one `tdl` at a time to avoid TDLib session conflicts)
-- **UID/GID hardcoded** — files are created with `1000:1000` ownership; make configurable in `config/libraries.yaml` if needed
 - **Public groups only** — `tdl` cannot resolve download links from private Telegram groups
-- **tdl required** — must be installed and authenticated separately
 
 ## License
 

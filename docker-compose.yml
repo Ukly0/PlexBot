@@ -1,7 +1,7 @@
 services:
   plexbot:
     build: .
-    image: plexbot:latest
+    image: ghcr.io/ukly0/plexbot:latest
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -11,11 +11,11 @@ services:
     volumes:
       - ./config:/app/config:ro
       - plexbot-data:/data
-      # Mount your media libraries below. Paths must match config/libraries.yaml roots.
-      # Example:
-      - /media/storage/data/media/tv:/media/tv
-      - /media/storage/data/media/movies:/media/movies
-      - /media/storage/data/media/anime:/media/anime
+      # Mount your media libraries here. Paths must match config/libraries.yaml roots.
+      # Use docker-compose.override.yml or edit directly:
+      # - /your/host/tv:/media/tv
+      # - /your/host/movies:/media/movies
+      # - /your/host/anime:/media/anime
     restart: unless-stopped
 
 volumes:
