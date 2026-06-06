@@ -175,7 +175,7 @@ async def _auth_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 def main():
-    load_env_file()
+    load_env_file("config/.env")
     st = load_settings()
     token = st.telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:

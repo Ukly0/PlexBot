@@ -30,5 +30,5 @@ download:
   # tdl download template. {url} and {dir} are filled at runtime.
   tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0
     --template "{{ .FileName }}"'
-  # Optional: dedicated TDL session directory to avoid DB locks with other clients.
-  # tdl_home: /data/tdl
+  # Dedicated TDL session directory (required for authentication).
+  tdl_home: /data/tdl

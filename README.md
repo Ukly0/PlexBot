@@ -138,12 +138,17 @@ RUN curl -Lo /usr/local/bin/tdl https://github.com/iyear/tdl/releases/latest/dow
 #   - /usr/local/bin/tdl:/usr/local/bin/tdl:ro
 ```
 
-**Authenticate tdl inside the container once:**
+**Authenticate tdl inside the container (one time — session persists in `./data/tdl`):**
 
 ```bash
-docker compose run --rm plexbot tdl login -T phone
-# Session persists in ./data/tdl
+# With docker compose
+docker compose run --rm -u plexbot -e TDL_HOME=/data/tdl plexbot tdl login -T qr
+
+# Or on a running container
+docker exec -it -u plexbot -e TDL_HOME=/data/tdl <container_name> tdl login -T qr
 ```
+
+> **Important:** The bot runs as user `plexbot` and uses `TDL_HOME=/data/tdl`. If you run `tdl login` as root (the default for `docker exec`), the session is saved for the wrong user and downloads will fail with `not authorized`.
 
 Then:
 

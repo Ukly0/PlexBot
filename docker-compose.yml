@@ -13,9 +13,9 @@ services:
       - plexbot-data:/data
       # Mount your media libraries below. Paths must match config/libraries.yaml roots.
       # Example:
-      # - /your/host/path/tv:/media/tv
-      # - /your/host/path/movies:/media/movies
-      # - /your/host/path/anime:/media/anime
+      - /media/storage/data/media/tv:/media/tv
+      - /media/storage/data/media/movies:/media/movies
+      - /media/storage/data/media/anime:/media/anime
     restart: unless-stopped
 
 volumes:

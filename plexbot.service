@@ -1,0 +1,18 @@
+[Unit]
+Description=PlexBot Telegram
+After=network.target
+
+[Service]
+Type=simple
+User=ukiyo
+Group=ukiyo
+WorkingDirectory=/home/ukiyo/github/PlexBot
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/ukiyo/github/PlexBot/venv/bin/python -m app.bot
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/home/ukiyo/github/PlexBot/bot.log
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target

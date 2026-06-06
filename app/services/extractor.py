@@ -70,8 +70,6 @@ def _detect_archive_type(path: Path) -> str | None:
     if name_lower.endswith(".tar.xz"):
         return "tar"
 
-    if any(s == ".zip" for s in suffixes):
-        return "zip"
     if any(
         s in {".rar", ".r00", ".r01", ".r02"}
         or (s.startswith(".r") and len(s) >= 3 and s[2:].isdigit())
@@ -80,6 +78,12 @@ def _detect_archive_type(path: Path) -> str | None:
         return "rar"
     if any(s == ".7z" for s in suffixes):
         return "7z"
+    _has_numeric_part = any(
+        s.startswith(".") and len(s) > 1 and s[1:].isdigit()
+        for s in suffixes
+    )
+    if any(s == ".zip" for s in suffixes) and not _has_numeric_part:
+        return "zip"
     return None
 
 

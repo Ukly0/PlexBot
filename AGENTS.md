@@ -273,6 +273,8 @@ Library root paths in `libraries.yaml` must match the container-side mount point
 4. **Group must be public** — `tdl` cannot resolve download links from private groups. The README and setup docs must make this clear.
 5. **AGENTS.md was in `.gitignore`** — removed. Commit this file.
 6. **4 placeholder files were removed** — `browse.py`, `create.py`, `season.py`, `selector.py` were empty stubs. Do not recreate them without implementing the feature.
+7. **Bot must have Group Privacy disabled** — Without this, the bot cannot see forwarded messages/files in groups (only `/commands`). Disable via @BotFather → `/mybots` → Bot Settings → Group Privacy → Turn off. Then remove and re-add the bot to the group.
+8. **`tdl login` must run as user `plexbot` with `TDL_HOME=/data/tdl`** — Running `docker exec tdl login` without `-u plexbot -e TDL_HOME=/data/tdl` saves the session for root, causing "not authorized" errors. Correct command: `docker exec -it -u plexbot -e TDL_HOME=/data/tdl <container> tdl login -T qr`
 
 ## Verification Checklist
 
