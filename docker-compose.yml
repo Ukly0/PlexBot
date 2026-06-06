@@ -1,7 +1,7 @@
 services:
   plexbot:
+    image: ghcr.io/ukly0/telegram-to-plex:latest
     build: .
-    image: ghcr.io/ukly0/plexbot:latest
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
@@ -11,8 +11,8 @@ services:
     volumes:
       - ./config:/app/config:ro
       - plexbot-data:/data
-      # Mount your media libraries here. Paths must match config/libraries.yaml roots.
-      # Use docker-compose.override.yml or edit directly:
+      # Map your media library paths here.
+      # These must match the 'root' values in config/libraries.yaml.
       # - /your/host/tv:/media/tv
       # - /your/host/movies:/media/movies
       # - /your/host/anime:/media/anime

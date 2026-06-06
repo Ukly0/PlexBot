@@ -6,13 +6,21 @@
   <p align="center">
     <a href="#quickstart"><strong>Quick Start</strong></a> ·
     <a href="#features">Features</a> ·
-    <a href="#configuration">Configuration</a> ·
-    <a href="#docker">Docker</a> ·
+    <a href="#screenshots">Screenshots</a> ·
     <a href="#how-it-works">How It Works</a>
   </p>
   <p align="center">
-    <a href="https://github.com/Ukly0/telegram-to-plex/pkgs/container/plexbot">
+    <a href="https://github.com/Ukly0/telegram-to-plex/pkgs/container/telegram-to-plex">
       <img src="https://img.shields.io/badge/ghcr.io-pull-blue?logo=docker" alt="Docker image" />
+    </a>
+    <a href="https://github.com/Ukly0/telegram-to-plex/actions/workflows/docker-publish.yml">
+      <img src="https://github.com/Ukly0/telegram-to-plex/actions/workflows/docker-publish.yml/badge.svg" alt="CI" />
+    </a>
+    <a href="https://www.python.org/downloads/">
+      <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+" />
+    </a>
+    <a href="https://github.com/Ukly0/telegram-to-plex/blob/main/LICENSE">
+      <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
     </a>
   </p>
 </p>
@@ -29,16 +37,18 @@
 
 ## Features
 
-- **Smart filename parsing** — extracts title, season, episode, and year from messy scene-release names
-- **TMDb auto-detection** — searches TMDb automatically and shows the top results with posters
-- **Plex-compatible renaming** — `S01E02 - Title.mkv` for series, `Title (Year).mkv` for movies, ASCII-only
-- **Library auto-detection** — if a show already has a folder, skips library selection
-- **Batch downloads** — forward multiple files, confirm once, all queue up
-- **Recent destinations** — re-download to the same show/season with one tap
-- **Archive extraction** — automatic RAR/ZIP/7z extraction after download
-- **FIFO download queue** — single-worker with progress bars, per-title cancel
-- **Multi-user groups** — state scoped per authorized chat, any allowed-group member can send links
-- **No database** — in-memory session cache, no SQLite, no ORM
+| | |
+|---|---|
+| **🔍 Smart Detection** | Extracts title, season, episode, and year from messy scene-release filenames |
+| **🎬 TMDb Integration** | Auto-searches TMDb and shows top results with posters |
+| **📁 Plex Naming** | `S01E02 - Title.mkv` for series, `Title (Year).mkv` for movies — ASCII-safe |
+| **⚡ Auto-Libraries** | Skips selection if the show already has a folder on disk |
+| **📦 Batch Downloads** | Forward multiple files, confirm once, all queue up |
+| **🔄 Quick Re-adds** | Recent destinations cached for one-tap re-downloads |
+| **🗜️ Archive Support** | Automatic RAR/ZIP/7z extraction after download |
+| **📊 Queue Management** | FIFO single-worker with progress bars and per-title cancel |
+| **👥 Multi-user** | Any member of an allowed group can send links |
+| **💾 No Database** | In-memory session cache — lightweight and fast |
 
 ## Quickstart
 
@@ -127,9 +137,18 @@ Then remove and re-add the bot to your group. Without this, the bot cannot see f
 | Admin User ID | Message [@userinfobot](https://t.me/userinfobot) on Telegram |
 | Group Chat ID | Add [@RawDataBot](https://t.me/RawDataBot) to your group, it will reply with the chat ID, then remove it |
 
+## Screenshots
+
+<p align="center">
+  <img src="./assets/menu.png" alt="Main Menu" width="280" />
+  <img src="./assets/search.png" alt="TMDb Search" width="280" />
+  <img src="./assets/queue.png" alt="Download Queue" width="280" />
+  <img src="./assets/realtime.png" alt="Download Progress" width="280" />
+</p>
+
 ## Docker
 
-The prebuilt image is published at `ghcr.io/ukly0/plexbot:latest` and is pulled automatically by `docker compose up`.
+The prebuilt image is published at `ghcr.io/ukly0/telegram-to-plex:latest` and is pulled automatically by `docker compose up`.
 
 To build locally instead:
 
@@ -301,6 +320,22 @@ config/
 - **Single download worker** — downloads are sequential (one `tdl` at a time to avoid TDLib session conflicts)
 - **Public groups only** — `tdl` cannot resolve download links from private Telegram groups
 
+## Contributing
+
+Contributions are welcome! If you have ideas for improvements or find bugs, feel free to:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Support
+
+If you find this project useful, consider giving it a ⭐️ on GitHub!
+
+For issues or questions, please [open an issue](https://github.com/Ukly0/telegram-to-plex/issues).
+
 ## License
 
-MIT
+[MIT](LICENSE)

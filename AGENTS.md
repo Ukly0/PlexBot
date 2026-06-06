@@ -28,7 +28,8 @@ app/
 │   ├── menu.py          # /start, /menu, main navigation dashboard
 │   ├── ingest.py        # Link/file intake — auto metadata extraction, flow orchestration
 │   ├── search.py        # TMDb search, result selection, pagination
-│   └── download.py      # Download queue, tdl subprocess, direct Telegram download, post-process
+│   ├── download.py      # Download queue, tdl subprocess, direct Telegram download, post-process
+│   └── telegram_utils.py # Telegram message/chat helpers
 ├── services/
 │   ├── tmdb.py          # TMDb API client — multi-search, seasons
 │   ├── downloader.py    # tdl subprocess wrapper — progress, retries, locking
@@ -36,12 +37,18 @@ app/
 │   ├── extractor.py     # Multipart RAR/ZIP detection and extraction
 │   └── namer.py         # Plex-safe naming, SxxExx parsing, movie naming
 config/
-├── libraries.yaml       # Library definitions (user-editable, mounted from host)
-├── .env                 # Secrets and permissions (mounted from host)
+├── .env.example         # Environment variable template (tracked)
+├── libraries.yaml.example # Library config template (tracked)
+├── libraries.yaml       # Library definitions (user-editable, gitignored)
+├── .env                 # Secrets and permissions (gitignored)
 docker-compose.yml
+docker-compose.override.yml  # Local volume mounts (gitignored)
 Dockerfile
 entrypoint.sh            # PUID/PGID setup, gosu privilege drop
+setup.sh                 # Interactive first-run setup script
+plexbot.service          # systemd service file
 requirements.txt
+.github/workflows/docker-publish.yml  # GHCR auto-publish on push
 ```
 
 **Removed / deprecated** — do not restore or add dependencies on:
@@ -122,7 +129,7 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 - Groups must be **public** (or have a public invite link) for `tdl` to resolve forwarded message download links.
 - Any member of an allowed group can send links/files — the bot processes them regardless of sender.
 - State is scoped per-chat via `context.chat_data`. Conversation state (search results, pending selections) is per-user via `context.user_data`.
-- Admin-only features (`/scan`, `/clean_tmp`) respect `ADMIN_USER_IDS` from `.env`.
+- Admin-only features (`/clean_tmp`) respect `ADMIN_USER_IDS` from `.env`.
 - Updates from unauthorized groups are rejected before normal handlers run, and the bot attempts to leave the group.
 
 ## State Keys
@@ -167,16 +174,18 @@ All callback data uses pipe-delimited prefixes: `prefix|value1|value2`. Every pa
 
 | Pattern | Handler | Purpose |
 |---------|---------|---------|
-| `action\|home` | `handle_menu` | Return to main dashboard |
-| `action\|search` | `handle_menu` | Trigger manual TMDb search |
-| `action\|queue` | `handle_menu` | Show download queue |
+| `action\|home` | `handle_action` | Return to main dashboard |
+| `action\|search` | `handle_action` | Trigger manual TMDb search |
+| `action\|queue` | `handle_action` | Show download queue |
+| `action\|continue\|{n}` | `handle_action` | Quick-add from recent destinations |
 | `tmdb\|{kind}\|{id}` | `handle_tmdb_select` | TMDb result chosen (`kind` = `movie` or `tv`) |
 | `page\|{n}` | `handle_tmdb_page` | TMDb results pagination |
 | `season\|{n}` | `handle_season` | Season number selected |
 | `lib\|{name}` | `handle_library` | Library destination chosen |
-| `cancel\|flow` | `handle_cancel` | Inline cancel button |
-| `cancel_task\|{id}` | `handle_queue_cancel` | Cancel queued download |
-| `continue\|{n}` | `handle_continue` | Quick-add from recent destinations |
+| `autolib\|{name}` | `handle_autolib` | Auto-detected existing library folder on disk |
+| `cancel\|flow` | `handle_cancel_flow` | Inline cancel button |
+| `cancel_task\|{id}` | `queue_cancel` | Cancel queued download |
+| `manual\|start` | `handle_manual_entry` | Start manual title entry flow |
 
 Add new patterns to both the handler registration in `app/bot.py` and this table.
 
@@ -240,18 +249,18 @@ When a user forwards a file in a private chat (1-on-1 with the bot), `tdl` canno
 
 ## Docker Deployment
 
-The Docker image includes `tdl` and `gosu`. The entrypoint (`entrypoint.sh`) runs as root, adjusts the `plexbot` user's UID/GID to match `PUID`/`PGID`, then drops privileges via `gosu`.
+The Docker image is published to GHCR (`ghcr.io/ukly0/telegram-to-plex:latest`) via GitHub Actions on every push. The image includes `tdl` and `gosu`. The entrypoint (`entrypoint.sh`) runs as root, adjusts the `plexbot` user's UID/GID to match `PUID`/`PGID`, then drops privileges via `gosu`.
 
 ```yaml
 # docker-compose.yml
 services:
   plexbot:
+    image: ghcr.io/ukly0/telegram-to-plex:latest
     build: .
-    image: plexbot:latest
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=UTC
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
     env_file:
       - config/.env
     volumes:
@@ -265,13 +274,15 @@ services:
 
 Library root paths in `libraries.yaml` must match the container-side mount points.
 
+`build: .` is a fallback for local development. In production, `docker compose pull` fetches the prebuilt image.
+
 ## Known Issues & Gotchas
 
 1. **`pkill -u` is Linux-specific** — `kill_stale_tdl()` in downloader won't work on macOS. Fine in Docker, but document in code.
 2. ~~**Hardcoded UID/GID**~~ — Fixed. `PUID`/`PGID` env vars configurable, applied at container start via `entrypoint.sh`.
 3. ~~**`safe_title` does not normalize Unicode**~~ — Fixed. `_ascii_safe()` now applies NFKD normalization before stripping non-ASCII. Accents and `ñ` → `n` are handled correctly.
 4. **Group must be public** — `tdl` cannot resolve download links from private groups. The README and setup docs must make this clear.
-5. **AGENTS.md was in `.gitignore`** — removed. Commit this file.
+5. ~~**AGENTS.md was in `.gitignore`**~~ — removed. Commit this file.
 6. **4 placeholder files were removed** — `browse.py`, `create.py`, `season.py`, `selector.py` were empty stubs. Do not recreate them without implementing the feature.
 7. **Bot must have Group Privacy disabled** — Without this, the bot cannot see forwarded messages/files in groups (only `/commands`). Disable via @BotFather → `/mybots` → Bot Settings → Group Privacy → Turn off. Then remove and re-add the bot to the group.
 8. **`tdl login` must run as user `plexbot` with `TDL_HOME=/data/tdl`** — Running `docker exec tdl login` without `-u plexbot -e TDL_HOME=/data/tdl` saves the session for root, causing "not authorized" errors. Correct command: `docker exec -it -u plexbot -e TDL_HOME=/data/tdl <container> tdl login -T qr`

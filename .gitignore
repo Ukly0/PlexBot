@@ -1,23 +1,48 @@
-.env
-venv
+# ── Secrets & configuration ──────────────────────────────────
+config/.env
+config/libraries.yaml
+
+# ── Docker Compose overrides (local media paths) ─────────────
+docker-compose.override.yml
+
+# ── Python ────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs & data ───────────────────────────────────────────────
+bot.log
 *.db
 *.db-shm
 *.db-wal
-.env.*
-bot.log
-!.env.example
-!config/.env.example
-!config/libraries.yaml.example
-__init__.py
-.venv
 *.dbhat
-.DS_Store
-.agents/
-plexbot-demo/
-skills-lock.json
-config/.env
-config/libraries.yaml
-docker-compose.override.yml
 /tmp/plexbot/
+
+# ── Legacy / deprecated (do not track) ────────────────────────
+store/
+fs/
+cli/
+app/infra/
+app/telegram/
+
+# ── Agent config ──────────────────────────────────────────────
+.agents/
+skills-lock.json
