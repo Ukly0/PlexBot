@@ -33,7 +33,7 @@
 
 ---
 
-**PlexBot** is an async Telegram bot that downloads media from Telegram groups, automatically detects titles and metadata, matches them against TMDb, renames files for Plex compatibility (ASCII-only, SxxExx format), and places them into the correct library folders — all with zero manual renaming.
+**PlexBot** is an async Telegram bot that downloads media from Telegram groups using [tdl](https://github.com/iyear/tdl), automatically detects titles and metadata, matches them against TMDb, renames files for Plex compatibility (ASCII-only, SxxExx format), and places them into the correct library folders — all with zero manual renaming.
 
 ## Features
 
@@ -335,6 +335,12 @@ Contributions are welcome! If you have ideas for improvements or find bugs, feel
 If you find this project useful, consider giving it a ⭐️ on GitHub!
 
 For issues or questions, please [open an issue](https://github.com/Ukly0/telegram-to-plex/issues).
+
+## Acknowledgments
+
+- **[tdl](https://github.com/iyear/tdl)** — Telegram Downloader, the engine behind all downloads. Fast, reliable, and open source.
+- **[python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)** — Python wrapper for the Telegram Bot API.
+- **[TMDb](https://www.themoviedb.org/)** — The Movie Database, for metadata and poster images.
 
 ## License
 
