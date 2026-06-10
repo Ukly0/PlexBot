@@ -43,8 +43,12 @@ async def run_download(
     on_progress: Optional[ProgressCb] = None,
     register_pid: Optional[Callable[[int], None]] = None,
     unregister_pid: Optional[Callable[[int], None]] = None,
-) -> bool:
-    """Run tdl download command with retry and optional progress callback."""
+) -> tuple[bool, str]:
+    """Run tdl download command with retry and optional progress callback.
+
+    Returns (ok, error_tail) — error_tail holds the last tdl output lines on
+    failure so callers can surface the actual reason to the user.
+    """
     if isinstance(cmd, str):
         raise TypeError("run_download requires an argument sequence, not shell text")
 
@@ -54,11 +58,13 @@ async def run_download(
     max_tail = 50
     last_percent = -1
     last_emit = 0.0
+    error_tail = ""
 
     try:
         await kill_stale_tdl()
 
         for attempt in range(1, retries + 1):
+            error_tail = ""
             display_cmd = shlex.join(cmd)
             logging.info("Attempt %s of %s: %s", attempt, retries, display_cmd)
             proc = await asyncio.create_subprocess_exec(
@@ -80,6 +86,7 @@ async def run_download(
                     )
                 except asyncio.TimeoutError:
                     logging.error("Download idle for %ss, terminating: %s", idle_timeout, display_cmd)
+                    error_tail = f"no output for {idle_timeout}s (stalled)"
                     proc.kill()
                     try:
                         await proc.wait()
@@ -130,12 +137,14 @@ async def run_download(
                     except Exception:
                         pass
                 logging.info("Download completed")
-                return True
+                return True, ""
 
             logging.error("Download failed (attempt %s): %s", attempt, last_line)
             if lines:
                 tail = " | ".join(lines[-8:])
                 logging.error("TDL tail: %s", tail)
+            if not error_tail:
+                error_tail = " | ".join(lines[-3:]) if lines else last_line
 
             if attempt < retries:
                 await asyncio.sleep(delay)
@@ -150,4 +159,4 @@ async def run_download(
         logging.info("Download cancelled")
         raise
 
-    return False
+    return False, error_tail

@@ -31,6 +31,8 @@ from app.handlers.menu import (
     handle_action,
     clean_tmp,
 )
+from app.handlers.dashboard import handle_dash
+from app.handlers.download import handle_dup_choice
 from app.handlers.ingest import handle_download_message
 from app.handlers.search import (
     handle_page,
@@ -98,7 +100,12 @@ async def _text_router(update, context):
         else:
             err = tmdb_last_error()
             note = f" TMDb: {err}" if err else ""
-            await update.message.reply_text(f"No results.{note}")
+            # Stay in search mode — otherwise the next typed title is
+            # silently ignored and the flow dead-ends.
+            set_state(context.user_data, STATE_SEARCH)
+            await update.message.reply_text(
+                f"No results.{note}\nTry another title, or /cancel."
+            )
         return
 
     if state == STATE_MANUAL_TITLE:
@@ -249,6 +256,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_manual_entry, pattern=r"^manual\|start"))
     app.add_handler(CallbackQueryHandler(queue_cancel, pattern=r"^cancel_task\|"))
     app.add_handler(CallbackQueryHandler(handle_autolib, pattern=r"^autolib\|"))
+    app.add_handler(CallbackQueryHandler(handle_dash, pattern=r"^dash\|"))
+    app.add_handler(CallbackQueryHandler(handle_dup_choice, pattern=r"^dup\|"))
 
     # Message handlers
     app.add_handler(

@@ -13,8 +13,8 @@ services:
       - plexbot-data:/data
       # Map your media library paths here.
       # These must match the 'root' values in config/libraries.yaml.
+      - /media/storage/data/media/movies:/media/movies
       # - /your/host/tv:/media/tv
-      # - /your/host/movies:/media/movies
       # - /your/host/anime:/media/anime
     restart: unless-stopped
 

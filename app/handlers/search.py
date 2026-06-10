@@ -1,8 +1,9 @@
 """TMDb search flow: result selection, pagination, season pick, library choice."""
 
 import asyncio
+import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 from app.services.tmdb import (
@@ -43,7 +44,8 @@ def build_results_keyboard(
     buttons: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for item in chunk:
-        label = f"{item.title} ({item.year})" if item.year else item.title
+        icon = "📺" if item.kind == "tv" else "🎬"
+        label = f"{icon} {item.title} ({item.year})" if item.year else f"{icon} {item.title}"
         row.append(
             InlineKeyboardButton(
                 label[:64], callback_data=f"tmdb|{item.kind}|{item.id}"
@@ -171,9 +173,21 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not results:
         await _edit_message(query, "No results. Search again.")
         return
-    await _edit_message(query, 
-        "Results:", reply_markup=build_results_keyboard(results, page)
-    )
+    markup = build_results_keyboard(results, page)
+    # Keep the poster in sync with the page: showing page-0's poster next to
+    # page-2's titles is misleading.
+    first = results[page * PAGE_SIZE] if page * PAGE_SIZE < len(results) else None
+    if query.message.photo and first and first.poster:
+        try:
+            await query.message.edit_media(
+                InputMediaPhoto(media=first.poster, caption="Results:"),
+                reply_markup=markup,
+            )
+            return
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                logging.debug("Poster swap failed, editing caption only: %s", e)
+    await _edit_message(query, "Results:", reply_markup=markup)
 
 
 async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -306,14 +320,9 @@ async def handle_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 query.message, context, pending_items,
                 download_dir, full_title, None, item.year,
             )
-            context.chat_data.pop("download_dir", None)
-            context.chat_data.pop("active_library", None)
-            context.chat_data.pop("season_hint", None)
-            context.chat_data.pop("selected_type", None)
-            context.user_data.pop("pending_title", None)
-            context.user_data.pop("pending_year", None)
-            context.user_data.pop("pending_season", None)
-            context.user_data.pop("selected_tmdb", None)
+            from app.state import clear_destination
+
+            clear_destination(context)
         else:
             markup = InlineKeyboardMarkup([[_home_button()]])
             await _edit_message(query, f"📁 Auto: {existing_lib['name']}\n{download_dir}\n\nSend a link or file.", reply_markup=markup)
@@ -417,7 +426,11 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
     if not library:
-        await _edit_message(query, f"Library '{lib_name}' not found.")
+        await _edit_message(
+            query,
+            f"Library '{lib_name}' not found.",
+            reply_markup=InlineKeyboardMarkup([[_home_button()]]),
+        )
         return
 
     sel = context.user_data.get("selected_tmdb") or {}
@@ -467,14 +480,9 @@ async def handle_library(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # For movies, clear destination after queuing so next file starts fresh
         if library.get("type") not in ("series", "anime"):
-            context.chat_data.pop("download_dir", None)
-            context.chat_data.pop("active_library", None)
-            context.chat_data.pop("season_hint", None)
-            context.chat_data.pop("selected_type", None)
-            context.user_data.pop("pending_title", None)
-            context.user_data.pop("pending_year", None)
-            context.user_data.pop("pending_season", None)
-            context.user_data.pop("selected_tmdb", None)
+            from app.state import clear_destination
+
+            clear_destination(context)
     else:
         await _edit_message(
             query,

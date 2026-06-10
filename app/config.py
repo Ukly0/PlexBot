@@ -37,9 +37,12 @@ class Library:
 
 @dataclass
 class DownloadCfg:
+    # --continue/--skip-same keep tdl non-interactive: without them a leftover
+    # partial download makes tdl prompt for resume and the subprocess hangs.
+    # -t/-l stay near tdl defaults; higher values trigger FLOOD_WAIT bans.
     tdl_template: str = (
-        'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0 '
-        '--template "{{ .FileName }}"'
+        'tdl dl -u {url} -d "{dir}" -t 8 -l 2 --continue --skip-same '
+        '--reconnect-timeout 0 --template "{{ filenamify .FileName }}"'
     )
     tdl_home: str = ""
 

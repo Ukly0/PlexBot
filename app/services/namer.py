@@ -70,7 +70,9 @@ def target_name(
     return f"S{season:02d}E{episode:02d} - {title}{ext}"
 
 
-def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
+def rename_video(
+    path: Path, title: str, season_hint: Optional[int], replace_existing: bool = False
+) -> Path:
     season, episode = parse_season_episode(path.name, season_hint)
     ext = path.suffix.lower()
     if ext not in VIDEO_EXT:
@@ -87,6 +89,13 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
     target = path.with_name(new_name)
     if target == path:
         return path
+    if target.exists() and replace_existing:
+        # User explicitly confirmed replacing the existing file.
+        try:
+            target.unlink()
+            logging.info("rename_video: replaced existing %s", target.name)
+        except Exception as e:
+            logging.warning("rename_video: could not replace %s: %s", target, e)
     if target.exists():
         base = target.stem
         suffix = target.suffix
@@ -99,14 +108,16 @@ def rename_video(path: Path, title: str, season_hint: Optional[int]) -> Path:
     return target
 
 
-def bulk_rename(root: Path, title: str, season_hint: Optional[int]) -> None:
+def bulk_rename(
+    root: Path, title: str, season_hint: Optional[int], replace_existing: bool = False
+) -> None:
     logging.info("bulk_rename: root=%s title=%s season_hint=%s", root, title, season_hint)
     video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
     logging.info("bulk_rename: found %d video files", len(video_files))
     for p in video_files:
         original = p.name
         try:
-            result = rename_video(p, title, season_hint)
+            result = rename_video(p, title, season_hint, replace_existing)
             if result == p:
                 logging.info("bulk_rename: skipped %s (no rename needed)", original)
         except Exception as e:
@@ -121,7 +132,9 @@ def _movie_title_with_year(title: str, year: Optional[int]) -> str:
     return sanitized or "Content"
 
 
-def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:
+def rename_movie_files(
+    root: Path, title: str, year: Optional[int], replace_existing: bool = False
+) -> None:
     target_base = _movie_title_with_year(title, year)
     logging.info("rename_movie_files: root=%s title=%s year=%s target_base=%s", root, title, year, target_base)
     video_files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXT]
@@ -133,6 +146,12 @@ def rename_movie_files(root: Path, title: str, year: Optional[int]) -> None:
             if target == p:
                 logging.info("rename_movie_files: skipped %s (already named)", original)
                 continue
+            if target.exists() and replace_existing:
+                try:
+                    target.unlink()
+                    logging.info("rename_movie_files: replaced existing %s", target.name)
+                except Exception as e:
+                    logging.warning("rename_movie_files: could not replace %s: %s", target, e)
             if target.exists():
                 base = target.stem
                 suffix = target.suffix

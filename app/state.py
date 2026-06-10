@@ -37,6 +37,30 @@ def set_state(user_data: dict, state: Optional[str]) -> None:
         user_data.pop("state", None)
 
 
+def clear_destination(context) -> None:
+    """Clear the active destination (chat-scoped) and pending metadata.
+
+    dest_title/dest_year live in chat_data so that in groups any member's
+    file inherits the destination title — not just the user who set it.
+    """
+    for key in [
+        "download_dir",
+        "season_hint",
+        "active_library",
+        "selected_type",
+        "dest_title",
+        "dest_year",
+    ]:
+        context.chat_data.pop(key, None)
+    for key in [
+        "pending_title",
+        "pending_year",
+        "pending_season",
+        "selected_tmdb",
+    ]:
+        context.user_data.pop(key, None)
+
+
 def reset_flow_state(context) -> None:
     for key in [
         "state",
@@ -54,8 +78,11 @@ def reset_flow_state(context) -> None:
         "season_hint",
         "active_library",
         "selected_type",
+        "dest_title",
+        "dest_year",
         "pending_links",
         "batch_prompted",
+        "dup_pending",
         "_batch_notices",
     ]:
         context.chat_data.pop(key, None)

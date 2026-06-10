@@ -471,34 +471,30 @@ async def handle_download_message(update: Update, context: ContextTypes.DEFAULT_
     # If destination is already set
     download_dir = context.chat_data.get("download_dir")
     if download_dir:
-        title = context.user_data.get("pending_title") or "Content"
+        # dest_title is chat-scoped so any group member's file gets the right
+        # title; pending_title only exists for the user who set the destination.
+        title = (
+            context.chat_data.get("dest_title")
+            or context.user_data.get("pending_title")
+            or "Content"
+        )
         season = context.chat_data.get("season_hint")
-        year = context.user_data.get("pending_year")
+        year = context.chat_data.get("dest_year") or context.user_data.get("pending_year")
         active_lib = context.chat_data.get("active_library") or {}
         lib_type = active_lib.get("type", "movie")
 
         # For movies: auto-queue and clear destination (each movie is independent)
         if lib_type not in ("series", "anime"):
-            from app.handlers.download import queue_download
+            from app.handlers.download import queue_download_batch
+            from app.state import clear_destination
 
-            display_name = filename or link
-            direct_kwargs = {}
+            entry = {"link": link, "filename": filename, "is_text": is_text_link}
             if direct_file_info:
-                direct_kwargs["direct_file_id"] = direct_file_info[0]
-                direct_kwargs["direct_filename"] = direct_file_info[1]
-            await queue_download(
-                message, context, link, download_dir,
-                title, season, year, display_name, use_group=is_text_link,
-                **direct_kwargs,
+                entry["direct_file_id"] = direct_file_info[0]
+            await queue_download_batch(
+                message, context, [entry], download_dir, title, season, year,
             )
-            context.chat_data.pop("download_dir", None)
-            context.chat_data.pop("active_library", None)
-            context.chat_data.pop("season_hint", None)
-            context.chat_data.pop("selected_type", None)
-            context.user_data.pop("pending_title", None)
-            context.user_data.pop("pending_year", None)
-            context.user_data.pop("pending_season", None)
-            context.user_data.pop("selected_tmdb", None)
+            clear_destination(context)
             return
 
         # For series: add to pending

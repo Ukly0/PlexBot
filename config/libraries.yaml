@@ -28,7 +28,7 @@ libraries:
 
 download:
   # tdl download template. {url} and {dir} are filled at runtime.
-  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 16 -l 9 --reconnect-timeout 0
-    --template "{{ .FileName }}"'
+  tdl_template: 'tdl dl -u {url} -d "{dir}" -t 8 -l 2 --continue --skip-same
+    --reconnect-timeout 0 --template "{{ filenamify .FileName }}"'
   # Dedicated TDL session directory (required for authentication).
   tdl_home: /data/tdl

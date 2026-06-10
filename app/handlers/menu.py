@@ -11,7 +11,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.config import load_settings
-from app.state import reset_flow_state, title_with_year, title_without_year
+from app.state import reset_flow_state, clear_destination, title_with_year, title_without_year
+from app.handlers.dashboard import clear_live, ensure_dashboard, update_dashboard
 from app.handlers.telegram_utils import (
     delete_safely,
     edit_message_safely,
@@ -81,6 +82,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _reply_or_edit(
         update, text, _main_menu_markup(_is_admin(update))
     )
+    if update.message:
+        await ensure_dashboard(context, update.effective_chat.id)
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,7 +106,9 @@ async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "Flow cancelled."
     if cancelled:
         msg += f" Cancelled {cancelled} running download(s)."
+        clear_live(context, update.effective_chat.id)
     await update.message.reply_text(msg, reply_markup=_home_button())
+    await update_dashboard(context, update.effective_chat.id, force=True)
 
 
 async def cancel_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,19 +121,21 @@ async def cancel_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             batch_ids = await mgr.batch_ids_for_chat(update.effective_chat.id)
         r, q = await mgr.cancel_all(update.effective_chat.id)
         await _clear_batch_statuses(context, batch_ids)
+        clear_live(context, update.effective_chat.id)
     msg = "Cancelled flow and all downloads."
     if r or q:
         msg += f" Stopped {r} running and cleared {q} queued."
     await update.message.reply_text(msg, reply_markup=_home_button())
+    await update_dashboard(context, update.effective_chat.id, force=True)
 
 
-async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mgr = context.bot_data.get("dl_manager")
+async def build_queue_view(mgr, chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Render the queue as (text, markup) — shared by /queue, the inline
+    queue action, the dashboard, and the post-cancel refresh."""
     if not mgr or not hasattr(mgr, "snapshot_by_content"):
-        await update.message.reply_text("Queue is empty.", reply_markup=_home_button())
-        return
+        return "Queue is empty.", _home_button()
 
-    running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
+    running, queued = await mgr.snapshot_by_content(chat_id)
     lines: list[str] = []
     buttons: list[list[InlineKeyboardButton]] = []
 
@@ -161,15 +168,18 @@ async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     if not running and not queued:
-        lines.append("Queue is empty.")
-        markup = _home_button()
-    else:
-        buttons.append(
-            [InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]
-        )
-        markup = InlineKeyboardMarkup(buttons)
+        return "Queue is empty.", _home_button()
 
-    await update.message.reply_text("\n".join(lines), reply_markup=markup)
+    buttons.append(
+        [InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]
+    )
+    return "\n".join(lines), InlineKeyboardMarkup(buttons)
+
+
+async def queue_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mgr = context.bot_data.get("dl_manager")
+    text, markup = await build_queue_view(mgr, update.effective_chat.id)
+    await update.message.reply_text(text, reply_markup=markup)
 
 
 async def _clear_batch_statuses(context: ContextTypes.DEFAULT_TYPE, batch_ids: set[int]) -> None:
@@ -197,14 +207,20 @@ async def queue_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mgr = context.bot_data.get("dl_manager")
     if not mgr:
         return
+    chat_id = update.effective_chat.id
     batch_ids = set()
     if hasattr(mgr, "batch_ids_for_task"):
-        batch_ids = await mgr.batch_ids_for_task(update.effective_chat.id, task_id)
-    r, q = await mgr.cancel_task(update.effective_chat.id, task_id)
+        batch_ids = await mgr.batch_ids_for_task(chat_id, task_id)
+    r, q = await mgr.cancel_task(chat_id, task_id)
     if r + q:
         await _clear_batch_statuses(context, batch_ids)
+        if r:
+            clear_live(context, chat_id)
+    # Refresh the queue view in place — stale cancel buttons are confusing.
     note = f"Cancelled {r + q} download(s)." if r + q else "Item not found."
-    await query.message.reply_text(note, reply_markup=_home_button())
+    text, markup = await build_queue_view(mgr, chat_id)
+    await edit_message_safely(query.message, f"{note}\n\n{text}", reply_markup=markup)
+    await update_dashboard(context, chat_id, force=True)
 
 
 async def show_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,47 +327,8 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif action == "queue":
         mgr = context.bot_data.get("dl_manager")
-        if not mgr or not hasattr(mgr, "snapshot_by_content"):
-            await _edit_query_message(
-                query, "Queue is empty.", reply_markup=_home_button()
-            )
-            return
-        running, queued = await mgr.snapshot_by_content(update.effective_chat.id)
-        lines = []
-        buttons = []
-        if running:
-            lines.append(f"▶️ {running.label} → {Path(running.destination).name}")
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        f"❌ Cancel {_shorten(running.label)}",
-                        callback_data=f"cancel_task|{running.representative_task_id}",
-                    )
-                ]
-            )
-        if queued:
-            lines.append("⏳ Queued:")
-            for idx, item in enumerate(queued, start=1):
-                lines.append(
-                    f"{idx}. {item.label} → {Path(item.destination).name}"
-                )
-                buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            f"❌ Cancel {_shorten(item.label)}",
-                            callback_data=f"cancel_task|{item.representative_task_id}",
-                        )
-                    ]
-                )
-        if not running and not queued:
-            lines.append("Queue is empty.")
-            markup = _home_button()
-        else:
-            buttons.append(
-                [InlineKeyboardButton("🏠 Main menu", callback_data="action|home")]
-            )
-            markup = InlineKeyboardMarkup(buttons)
-        await _edit_query_message(query, "\n".join(lines), reply_markup=markup)
+        text, markup = await build_queue_view(mgr, update.effective_chat.id)
+        await _edit_query_message(query, text, reply_markup=markup)
     elif action == "recent":
         await show_recent(update, context)
     elif action == "admin":
@@ -362,9 +339,15 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data.pop("batch_prompted", None)
         pending: list = context.chat_data.get("pending_links", [])
         download_dir = context.chat_data.get("download_dir")
-        title = context.user_data.get("pending_title") or "Content"
+        # Prefer the chat-scoped destination title: any group member may press
+        # this button, not just the user who set the destination.
+        title = (
+            context.chat_data.get("dest_title")
+            or context.user_data.get("pending_title")
+            or "Content"
+        )
         season = context.chat_data.get("season_hint")
-        year = context.user_data.get("pending_year")
+        year = context.chat_data.get("dest_year") or context.user_data.get("pending_year")
         if not pending or not download_dir:
             await query.message.reply_text("Nothing to queue.", reply_markup=_home_button())
             return
@@ -378,26 +361,12 @@ async def handle_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data["pending_links"] = []
         active_lib = context.chat_data.get("active_library") or {}
         if active_lib.get("type") not in {"series", "anime"}:
-            context.chat_data.pop("download_dir", None)
-            context.chat_data.pop("active_library", None)
-            context.chat_data.pop("season_hint", None)
-            context.chat_data.pop("selected_type", None)
-            context.user_data.pop("pending_title", None)
-            context.user_data.pop("pending_year", None)
-            context.user_data.pop("pending_season", None)
-            context.user_data.pop("selected_tmdb", None)
+            clear_destination(context)
     elif action == "new_search":
         context.chat_data.pop("batch_prompted", None)
         # Keep the pending links, clear destination, trigger auto-detect on them
         pending: list = context.chat_data.get("pending_links", [])
-        context.chat_data.pop("download_dir", None)
-        context.chat_data.pop("active_library", None)
-        context.chat_data.pop("season_hint", None)
-        context.chat_data.pop("selected_type", None)
-        context.user_data.pop("pending_title", None)
-        context.user_data.pop("pending_year", None)
-        context.user_data.pop("pending_season", None)
-        context.user_data.pop("selected_tmdb", None)
+        clear_destination(context)
         context.user_data.pop("state", None)
 
         if not pending:

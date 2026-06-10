@@ -29,6 +29,7 @@ app/
 │   ├── ingest.py        # Link/file intake — auto metadata extraction, flow orchestration
 │   ├── search.py        # TMDb search, result selection, pagination
 │   ├── download.py      # Download queue, tdl subprocess, direct Telegram download, post-process
+│   ├── dashboard.py     # Pinned live status message — progress bar, speed/ETA, queue summary
 │   └── telegram_utils.py # Telegram message/chat helpers
 ├── services/
 │   ├── tmdb.py          # TMDb API client — multi-search, seasons
@@ -92,7 +93,7 @@ All file and folder names must be safe for Plex. The `app/services/namer.py` mod
 - **Series format**: `S01E02 - Episode Title.mkv` inside `ShowName/Season 01/`
 - **Movie format**: `Movie Title (2024).mkv` inside `Movie Title (2024)/`
 - **Fallback**: if title is empty after sanitization, use `"Content"`.
-- **Collisions**: append `-dup1`, `-dup2`, etc. to the stem, never overwrite.
+- **Collisions**: append `-dup1`, `-dup2`, etc. to the stem, never overwrite. Exception: when the user explicitly confirms the `dup|replace` prompt, `replace_existing=True` is threaded through the pipeline and the existing target file is replaced.
 
 When parsing episode numbers from filenames, support these patterns (all case-insensitive):
 - `S01E02`, `s01e02`, `1x02`, `1X02` → season=1, episode=2
@@ -153,9 +154,14 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 | `download_dir` | `str` | Chosen destination path |
 | `season_hint` | `int` or `None` | Season number for current download |
 | `active_library` | `dict` | `{name, root, type}` — selected library |
+| `dest_title` | `str` | Destination title, chat-scoped so any group member's file inherits it |
+| `dest_year` | `int` or `None` | Destination year, chat-scoped (paired with `dest_title`) |
 | `pending_links` | `list[dict]` | Telegram links/files awaiting destination or batch confirmation |
 | `batch_prompted` | `bool` | Whether the current series batch prompt has already been shown |
+| `dup_pending` | `dict` | Items flagged as already-in-library, awaiting the skip/replace decision |
 | `_batch_notices` | `dict` | Debounce state for repeated batch status messages |
+
+Use `clear_destination(context)` (in `app/state.py`) to clear the destination + pending metadata block — do not pop the keys one by one.
 
 ### `context.bot_data` (global singletons)
 
@@ -165,6 +171,9 @@ While the bot is running, it keeps an in-memory dict in `bot_data` mapping `chat
 | `recent_destinations` | `dict[chat_id, list]` | In-memory cache of recent downloads per chat |
 | `settings` | `Settings` | Loaded library configuration |
 | `download_batches` | `dict` | Runtime status messages for compact multi-item batch progress |
+| `dashboards` | `dict[chat_id, dict]` | Pinned dashboard message refs (`message_id`, edit throttle state) |
+| `dash_live` | `dict[chat_id, dict]` | Live progress fields (label, pct, speed, eta, batch index/total) |
+| `dash_recent` | `dict[chat_id, list]` | Last completed items shown on the dashboard |
 
 Call `reset_flow_state(context)` to clear all user_data and chat_data keys on cancel or completion.
 
@@ -184,8 +193,11 @@ All callback data uses pipe-delimited prefixes: `prefix|value1|value2`. Every pa
 | `lib\|{name}` | `handle_library` | Library destination chosen |
 | `autolib\|{name}` | `handle_autolib` | Auto-detected existing library folder on disk |
 | `cancel\|flow` | `handle_cancel_flow` | Inline cancel button |
-| `cancel_task\|{id}` | `queue_cancel` | Cancel queued download |
+| `cancel_task\|{id}` | `queue_cancel` | Cancel queued download (refreshes the queue view in place) |
 | `manual\|start` | `handle_manual_entry` | Start manual title entry flow |
+| `dash\|search` / `dash\|queue` | `handle_dash` | Dashboard shortcuts: start search / show queue |
+| `dash\|cancel` (+ `cancel_yes`/`cancel_no`) | `handle_dash` | Cancel the running download, with confirmation |
+| `dup\|skip` / `dup\|replace` | `handle_dup_choice` | Decide what to do with already-in-library duplicates |
 
 Add new patterns to both the handler registration in `app/bot.py` and this table.
 
@@ -197,10 +209,11 @@ Add new patterns to both the handler registration in `app/bot.py` and this table
    - Forwarded files in **private chats** → Bot API cannot resolve `t.me` links for private chats, so files are downloaded directly via `app/services/telegram_download.py` (20 MB Bot API limit)
 2. `app/handlers/download.py::queue_download()` builds the `tdl` command and enqueues a coroutine factory in `DownloadManager`. When `direct_file_id` is provided (private chat), skips `tdl` and downloads via Telegram Bot API instead. `queue_download_batch()` wraps multiple items into one compact Telegram status message.
 3. `DownloadManager` processes one task at a time via a single async worker. It is a global singleton stored in `bot_data["dl_manager"]`.
-4. `app/services/downloader.py::run_download()` calls `tdl dl` as an async subprocess, parsing progress from stdout. Constants:
+4. `app/services/downloader.py::run_download()` calls `tdl dl` as an async subprocess, parsing progress from stdout. Returns `(ok, error_tail)` — the tail feeds `_friendly_error()` in `download.py` so users see the actual failure reason. Constants:
    - Retries: 3 on failure
    - Progress updates: rate-limited to max every 5 seconds and min 2% change
-   - Global `TDL_LOCK` (asyncio.Lock) serializes all `tdl` invocations to prevent TDLib database conflicts
+   - The tdl template must keep `--continue --skip-same`: without them a leftover partial download makes tdl prompt interactively and the subprocess stalls. Keep `-t`/`-l` low (8/2) — high values trigger Telegram FLOOD_WAIT bans.
+   - Live progress (bar, speed, ETA) renders on the pinned dashboard (`app/handlers/dashboard.py`), not as per-download chat messages.
 5. After download: `app/services/extractor.py::extract_archives()` detects multipart RAR/ZIP by scanning for `.rar`/`.part1.rar`/`.zip`, extracts, and removes archives.
 6. Series: `app/services/namer.py::bulk_rename()` walks the directory and renames all video files to Plex-compatible SxxExx names.
 7. Movies: `app/services/namer.py::rename_movie_files()` renames to `Title (Year).ext`.
