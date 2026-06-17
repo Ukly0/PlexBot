@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Awaitable, Optional
@@ -559,10 +560,48 @@ async def queue_download(
 
         before_files = _snapshot_files(path_clean)
 
+        # In-chat progress bar (restored): the live bar is edited onto this
+        # download's own status message, throttled to avoid Telegram floods.
+        # The pinned dashboard is still updated alongside it.
+        _chat_bar = {"pct": -1, "ts": 0.0}
+
+        def _render_bar(pct: int, speed, eta) -> str:
+            bar_len = 16
+            filled = int(bar_len * max(0, min(100, pct)) / 100)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            extras = " · ".join(
+                p for p in (speed, f"ETA {eta}" if eta else None) if p
+            )
+            return f"[{bar}] {pct}%" + (f" · {extras}" if extras else "")
+
         async def report_progress(pct: int, line: str):
             speed, eta = _parse_speed_eta(line)
             set_live(context, message.chat_id, pct=pct, speed=speed, eta=eta)
             await update_dashboard(context, message.chat_id)
+
+            # In-chat bar (throttled): skip backwards, sub-2% steps under 4s.
+            now = time.monotonic()
+            if pct < _chat_bar["pct"]:
+                return
+            if pct - _chat_bar["pct"] < 2 and now - _chat_bar["ts"] < 4.0:
+                return
+            _chat_bar["pct"] = pct
+            _chat_bar["ts"] = now
+            body = _render_bar(pct, speed, eta)
+            if batch_mode:
+                label = (
+                    context.bot_data.get("download_batches", {})
+                    .get(batch_id, {})
+                    .get("label", title_snapshot)
+                )
+                await _safe_batch_edit(
+                    f"⬇️ Batch: {label}\n"
+                    f"Downloading {batch_index}/{batch_total}: {human_label}\n{body}"
+                )
+            elif status_msg is not None:
+                await _safe_edit(
+                    status_msg, f"⬇️ Downloading: {human_label}\n{body}"
+                )
 
         err_tail = ""
         if is_direct:
